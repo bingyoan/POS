@@ -1,10 +1,10 @@
-
 export enum Category {
   SMALL_DISH = 'Small Dish',
   SHARK_SMOKE = 'Smoked Shark'
 }
 
-export type PaymentMethod = 'CASH' | 'LINE_PAY';
+// ✅ 修改這裡：新增 'WASTE' (報廢/損耗)
+export type PaymentMethod = 'CASH' | 'LINE_PAY' | 'WASTE';
 
 export interface Customer {
   name: string;
@@ -42,8 +42,8 @@ export interface Order {
   totalCost: number;
   totalProfit: number;
   paymentMethod: PaymentMethod;
-  customer?: Customer; // 新增：客資
-  remarks?: string;    // 新增：備註
+  customer?: Customer;
+  remarks?: string;
 }
 
 export interface SalesReport {
@@ -53,14 +53,12 @@ export interface SalesReport {
   lowMarginItem: string;
 }
 
-// 新增：庫存盤點紀錄 (前端狀態用)
 export interface InventoryRecord {
   opening: number; // 期初
   closing: number; // 期末
   waste: number;   // 損耗
 }
 
-// 新增：Supabase 資料庫對應介面
 export interface DailyClosingRecord {
   id?: number;
   date: string; // YYYY-MM-DD
