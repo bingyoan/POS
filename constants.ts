@@ -1,4 +1,3 @@
-
 import { Category, Product } from './types';
 
 export const PRODUCTS: Product[] = [
@@ -9,9 +8,12 @@ export const PRODUCTS: Product[] = [
     category: Category.SMALL_DISH, 
     costPer600g: 235, 
     defaultSellingPricePer600g: 650,
+    // ✅ 修改這裡：只保留 1入 和 2入特價
     fixedPrices: [
-      { label: '標準盒', price: 130 },
-      { label: '紙袋包', price: 180 }
+      { label: '1 盒', price: 130 },
+      { label: '2 盒 (特價)', price: 250 },
+      { label: '1 袋', price: 180 },
+      { label: '2 袋 (特價)', price: 350 }
     ]
   },
   { id: 'sd_jellyfish', name: '海蜇皮', category: Category.SMALL_DISH, costPer600g: 130, defaultSellingPricePer600g: 300 },
@@ -26,8 +28,8 @@ export const PRODUCTS: Product[] = [
     id: 'ss_combo_200', 
     name: '綜合鯊魚煙', 
     category: Category.SHARK_SMOKE, 
-    costPer600g: 0, // Calculated dynamically
-    defaultSellingPricePer600g: 0, // Fixed price item
+    costPer600g: 0, 
+    defaultSellingPricePer600g: 0, 
     fixedPrices: [{ label: '固定', price: 200 }]
   },
   { id: 'ss_sharkskin', name: '鯊魚皮', category: Category.SHARK_SMOKE, costPer600g: 120, defaultSellingPricePer600g: 360 },
@@ -54,4 +56,4 @@ export const PRICING_RULES = {
   }
 };
 
-export const MODIFIERS = ['多薑絲', '不加醬', '加辣', '芥末多'];
+export const MODIFIERS = ['多薑絲', '不加醬', '加辣', '芥末多', '不要芥末'];
