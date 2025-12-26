@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { PRODUCTS } from './constants';
 import { Product, CartItem, Order, Category, PaymentMethod, Customer } from './types';
@@ -6,20 +5,25 @@ import { ProductCard } from './components/ProductCard';
 import { CartSidebar } from './components/CartSidebar';
 import { CustomWeightModal } from './components/CustomWeightModal';
 import { DashboardModal } from './components/DashboardModal';
-import { ComboModal } from './components/ComboModal'; // Import ComboModal
+import { ComboModal } from './components/ComboModal';
 import { Settings, ChefHat, LayoutGrid } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 
 const App: React.FC = () => {
   // --- Data State ---
-  // Load initial state from LocalStorage if available
+  // 使用你原本的 Key: pos_cart
   const [cart, setCart] = useState<CartItem[]>(() => {
     const saved = localStorage.getItem('pos_cart');
     return saved ? JSON.parse(saved) : [];
   });
   
-  const [soldOutIds, setSoldOutIds] = useState<string[]>([]);
+  const [soldOutIds, setSoldOutIds] = useState<string[]>(() => {
+    // 這裡建議也加上持久化，以免重新整理後缺貨設定跑掉
+    const saved = localStorage.getItem('pos_sold_out');
+    return saved ? JSON.parse(saved) : [];
+  });
   
+  // 使用你原本的 Key: pos_orders_today
   const [orders, setOrders] = useState<Order[]>(() => {
     const saved = localStorage.getItem('pos_orders_today');
     return saved ? JSON.parse(saved) : [];
@@ -36,10 +40,14 @@ const App: React.FC = () => {
     localStorage.setItem('pos_orders_today', JSON.stringify(orders));
   }, [orders]);
 
+  useEffect(() => {
+    localStorage.setItem('pos_sold_out', JSON.stringify(soldOutIds));
+  }, [soldOutIds]);
+
   // --- UI State ---
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [isDashboardOpen, setIsDashboardOpen] = useState(false);
-  const [isComboModalOpen, setIsComboModalOpen] = useState(false); // State for Combo Modal
+  const [isComboModalOpen, setIsComboModalOpen] = useState(false);
 
   // --- Core Logic ---
 
@@ -86,39 +94,17 @@ const App: React.FC = () => {
     setSelectedProduct(null);
   };
 
-  // Triggered by Top Button OR Grid Item
   const handleOpenComboModal = () => {
     setIsComboModalOpen(true);
   };
 
-  const handleConfirmCombo = (selectedItems: Product[]) => {
-    // Logic: 
-    // Price fixed at $200.
-    // Cost estimation: Assume total weight 450g. Split evenly among selected items.
-    const totalWeightEst = 450;
-    const weightPerItem = totalWeightEst / selectedItems.length;
-    let totalEstimatedCost = 0;
-    
-    selectedItems.forEach(p => {
-      totalEstimatedCost += (p.costPer600g / 600) * weightPerItem;
-    });
-
-    const itemNames = selectedItems.map(p => p.name).join(', ');
-
-    const newItem: CartItem = {
-      id: uuidv4(),
-      productId: 'ss_combo_200',
-      productName: '綜合鯊魚煙',
-      type: 'standard_box',
-      quantity: 1,
-      weightGrams: totalWeightEst,
-      price: 200,
-      cost: Math.round(totalEstimatedCost),
-      modifiers: [`內容: ${itemNames}`] // Record selected items in modifiers
-    };
-
-    setCart([...cart, newItem]);
-    setIsComboModalOpen(false);
+  // ✅ 修改重點：接收已經拆解好的 CartItem 陣列
+  // 這樣庫存扣除才會正確對應到單品
+  const handleConfirmCombo = (cartItems: CartItem[]) => {
+    if (cartItems.length > 0) {
+      setCart(prev => [...prev, ...cartItems]);
+      setIsComboModalOpen(false);
+    }
   };
 
   const handleProductClick = (product: Product) => {
@@ -165,6 +151,12 @@ const App: React.FC = () => {
   
   const handleDeleteOrder = (orderId: string) => {
     setOrders(prev => prev.filter(o => o.id !== orderId));
+  };
+
+  // ✅ 新增：日結時清空訂單的功能
+  const handleClearAllOrders = () => {
+    setOrders([]);
+    localStorage.removeItem('pos_orders_today');
   };
 
   const handleHoldOrder = () => {
@@ -279,13 +271,14 @@ const App: React.FC = () => {
         products={PRODUCTS}
         onUpdateRemark={handleUpdateOrderRemark}
         onDeleteOrder={handleDeleteOrder}
+        onClearAllOrders={handleClearAllOrders} // ✅ 傳入清空功能
       />
 
       <ComboModal 
         products={PRODUCTS} 
         isOpen={isComboModalOpen} 
         onClose={() => setIsComboModalOpen(false)} 
-        onConfirm={handleConfirmCombo} 
+        onConfirm={handleConfirmCombo} // ✅ 這裡現在對應正確的型別
       />
     </div>
   );
