@@ -1,8 +1,7 @@
-
 import React, { useState, useMemo, useEffect } from 'react';
 import { Order, Product, InventoryRecord, DailyClosingRecord } from '../types';
 import { supabase } from '../lib/supabase';
-import { X, TrendingUp, AlertTriangle, List, BarChart3, MessageSquare, User, Clock, CheckCircle2, PieChart as PieChartIcon, ArrowDownRight, Trash2, ClipboardList, Save, Calendar, Search, Cloud, RefreshCw } from 'lucide-react';
+import { X, TrendingUp, List, BarChart3, Cloud, RefreshCw, Trash2, ClipboardList, Save, Calendar, Search, PieChart as PieChartIcon } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
 
 interface DashboardModalProps {
@@ -13,11 +12,24 @@ interface DashboardModalProps {
   products: Product[];
   onUpdateRemark: (orderId: string, remark: string) => void;
   onDeleteOrder: (orderId: string) => void;
+  // ✅ 新增：接收清空訂單的函數
+  onClearAllOrders: () => void;
 }
 
-export const DashboardModal: React.FC<DashboardModalProps> = ({ isOpen, onClose, orders, soldOutIds, products, onUpdateRemark, onDeleteOrder }) => {
+export const DashboardModal: React.FC<DashboardModalProps> = ({ 
+  isOpen, 
+  onClose, 
+  orders, 
+  soldOutIds, 
+  products, 
+  onUpdateRemark, 
+  onDeleteOrder,
+  onClearAllOrders // ✅ 解構出來
+}) => {
   const [activeTab, setActiveTab] = useState<'overview' | 'reports' | 'inventory'>('overview');
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [editingRemarkId, setEditingRemarkId] = useState<string | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [remarkText, setRemarkText] = useState('');
   
   // Inventory State
@@ -56,6 +68,9 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({ isOpen, onClose,
       }
 
       const actualRevenue = orders.reduce((sum, order) => {
+        // 排除報廢訂單 (營收為0，不應計入實際營收比較，但庫存已扣)
+        if (order.paymentMethod === 'WASTE') return sum;
+
         const productTotal = order.items
           .filter(item => item.productId === product.id)
           .reduce((itemSum, item) => itemSum + item.price, 0);
@@ -80,6 +95,13 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({ isOpen, onClose,
   const totalInventoryDiff = useMemo(() => {
       return inventoryRows.reduce((sum, row) => sum + row.diff, 0);
   }, [inventoryRows]);
+
+  // ✅ 新增：計算本日系統登記的損耗總成本 (來自報廢按鈕)
+  const totalWasteCost = useMemo(() => {
+    return orders
+      .filter(o => o.paymentMethod === 'WASTE')
+      .reduce((sum, o) => sum + o.totalCost, 0);
+  }, [orders]);
 
   // --- Handlers ---
 
@@ -121,7 +143,7 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({ isOpen, onClose,
   }, [isOpen, activeTab]);
 
   const handleCloseDay = async () => {
-    if (!window.confirm('確定要執行本日結帳嗎？\n這將會將今日營收數據存入雲端資料庫。')) return;
+    if (!window.confirm('確定要執行本日結帳嗎？\n\n1. 營收數據將存入雲端。\n2. 本日訂單將會「清空」。\n3. 請確認盤點資料已輸入完成(若有)。')) return;
     
     setIsClosingDay(true);
     
@@ -139,8 +161,9 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({ isOpen, onClose,
       total_profit: totalProfit,
       total_cost: totalCost,
       order_count: orders.length,
-      inventory_variance: totalInventoryDiff,
-      note: `自動結帳 - 現金: ${totalSalesCash}, LINE: ${totalSalesLine}`
+      // 如果有做盤點(totalInventoryDiff != 0)則使用盤點差異，否則使用系統記錄的損耗成本
+      inventory_variance: totalInventoryDiff !== 0 ? totalInventoryDiff : -totalWasteCost, 
+      note: `日結 - 現金:${totalSalesCash}, LINE:${totalSalesLine}, 系統損耗:${totalWasteCost}`
     };
 
     try {
@@ -151,7 +174,12 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({ isOpen, onClose,
 
       if (error) throw error;
 
-      alert(`✅ ${todayStr} 結帳成功！資料已同步至 Supabase。`);
+      alert(`✅ ${todayStr} 結帳成功！\n資料已同步，本日訂單將自動清空。`);
+      
+      // ✅ 結帳成功後，呼叫清空訂單並關閉視窗
+      onClearAllOrders();
+      onClose();
+
     } catch (err: any) {
       console.error(err);
       alert(`❌ 結帳失敗: ${err.message}`);
@@ -160,6 +188,7 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({ isOpen, onClose,
     }
   };
 
+  /*
   const startEditRemark = (order: Order) => {
     setEditingRemarkId(order.id);
     setRemarkText(order.remarks || '');
@@ -169,6 +198,7 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({ isOpen, onClose,
     onUpdateRemark(orderId, remarkText);
     setEditingRemarkId(null);
   };
+  */
 
   const handleDeleteClick = (orderId: string) => {
     if (window.confirm('確定要刪除這筆交易紀錄嗎？\n刪除後營收金額將會扣除，且無法復原。')) {
@@ -189,31 +219,7 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({ isOpen, onClose,
   const totalSalesCash = orders.filter(o => o.paymentMethod === 'CASH').reduce((sum, o) => sum + o.totalPrice, 0);
   const totalSalesLine = orders.filter(o => o.paymentMethod === 'LINE_PAY').reduce((sum, o) => sum + o.totalPrice, 0);
   const totalRevenue = totalSalesCash + totalSalesLine;
-  const totalProfit = orders.reduce((sum, o) => sum + o.totalProfit, 0);
-
-  const itemStats: Record<string, { quantity: number, revenue: number, cost: number }> = {};
-  orders.forEach(o => o.items.forEach(i => {
-    if (!itemStats[i.productName]) {
-      itemStats[i.productName] = { quantity: 0, revenue: 0, cost: 0 };
-    }
-    itemStats[i.productName].quantity += i.quantity;
-    itemStats[i.productName].revenue += i.price;
-    itemStats[i.productName].cost += i.cost;
-  }));
-
-  const bestSellers = Object.entries(itemStats)
-    .sort(([, a], [, b]) => b.quantity - a.quantity)
-    .slice(0, 5);
-
-  const lowMarginItems = Object.entries(itemStats)
-    .map(([name, stats]) => ({
-      name,
-      margin: stats.revenue > 0 ? ((stats.revenue - stats.cost) / stats.revenue) * 100 : 0,
-      profit: stats.revenue - stats.cost
-    }))
-    .filter(i => i.profit > 0)
-    .sort((a, b) => a.margin - b.margin)
-    .slice(0, 5);
+  const totalProfit = orders.reduce((sum, o) => sum + o.totalProfit, 0); // 已包含扣除損耗成本
 
   const paymentData = [
     { name: '現金', value: totalSalesCash, color: '#10b981' },
@@ -276,9 +282,17 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({ isOpen, onClose,
                     <span className="text-5xl font-black text-blue-400">${totalRevenue.toLocaleString()}</span>
                     <p className="text-gray-500 text-xs mt-1 font-bold">總營業額 (TWD)</p>
                   </div>
-                  <div className="bg-blue-900/20 p-4 rounded-xl border border-blue-900/30 flex justify-between items-center">
-                    <p className="text-blue-300 text-sm font-bold">預估利潤</p>
-                    <p className="text-2xl font-mono font-bold text-blue-200">${Math.round(totalProfit).toLocaleString()}</p>
+                  
+                  {/* ✅ 修改：預估利潤 + 損耗成本 並排顯示 */}
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="bg-blue-900/20 p-4 rounded-xl border border-blue-900/30">
+                      <p className="text-blue-300 text-sm font-bold">預估淨利</p>
+                      <p className="text-2xl font-mono font-bold text-blue-200">${Math.round(totalProfit).toLocaleString()}</p>
+                    </div>
+                    <div className="bg-red-900/20 p-4 rounded-xl border border-red-900/30">
+                      <p className="text-red-300 text-sm font-bold">損耗/報廢成本</p>
+                      <p className="text-2xl font-mono font-bold text-red-200">-${totalWasteCost.toLocaleString()}</p>
+                    </div>
                   </div>
                 </div>
 
@@ -326,21 +340,29 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({ isOpen, onClose,
                   <div className="overflow-y-auto no-scrollbar space-y-2 flex-1">
                     {orders.length === 0 ? <p className="text-gray-500 italic">尚無訂單</p> : 
                       orders.map(order => (
-                         <div key={order.id} className="bg-gray-900/50 p-3 rounded-xl border border-gray-700 flex justify-between items-center">
+                          <div key={order.id} className="bg-gray-900/50 p-3 rounded-xl border border-gray-700 flex justify-between items-center">
                             <div>
                                <div className="flex gap-2 items-center mb-1">
                                  <span className="text-xs font-mono text-gray-500">{new Date(order.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
-                                 <span className={`text-[10px] px-1.5 py-0.5 rounded border ${order.paymentMethod === 'LINE_PAY' ? 'border-green-800 text-green-500' : 'border-blue-800 text-blue-500'}`}>
-                                    {order.paymentMethod === 'LINE_PAY' ? 'LINE' : '現金'}
-                                 </span>
+                                 {/* 顯示支付方式標籤 */}
+                                 {order.paymentMethod === 'WASTE' ? (
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded border border-red-800 text-red-500">損耗</span>
+                                 ) : (
+                                    <span className={`text-[10px] px-1.5 py-0.5 rounded border ${order.paymentMethod === 'LINE_PAY' ? 'border-green-800 text-green-500' : 'border-blue-800 text-blue-500'}`}>
+                                      {order.paymentMethod === 'LINE_PAY' ? 'LINE' : '現金'}
+                                    </span>
+                                 )}
                                </div>
-                               <div className="text-sm text-gray-300 font-bold">
+                               <div className={`text-sm font-bold ${order.paymentMethod === 'WASTE' ? 'text-red-400 line-through' : 'text-gray-300'}`}>
                                   ${order.totalPrice} 
                                   <span className="text-xs font-normal text-gray-500 ml-2">({order.items.length} 項)</span>
                                </div>
+                               {order.paymentMethod === 'WASTE' && (
+                                 <div className="text-xs text-red-500 font-bold">成本: -${order.totalCost}</div>
+                               )}
                             </div>
                             <button onClick={() => handleDeleteClick(order.id)} className="text-red-900 hover:text-red-500 p-2"><Trash2 size={16}/></button>
-                         </div>
+                          </div>
                       ))
                     }
                   </div>
@@ -414,21 +436,21 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({ isOpen, onClose,
                       </thead>
                       <tbody className="divide-y divide-gray-800 text-sm">
                          {historyRecords.length === 0 ? (
-                            <tr><td colSpan={7} className="p-8 text-center text-gray-500 italic">無資料，請調整日期範圍查詢</td></tr>
+                           <tr><td colSpan={7} className="p-8 text-center text-gray-500 italic">無資料，請調整日期範圍查詢</td></tr>
                          ) : (
-                            historyRecords.map(record => (
-                               <tr key={record.id} className="hover:bg-gray-800/30 transition-colors">
-                                  <td className="p-4 font-bold text-gray-200">{record.date}</td>
-                                  <td className="p-4 text-right font-mono text-blue-300">${record.total_revenue.toLocaleString()}</td>
-                                  <td className="p-4 text-right font-mono text-gray-400">${record.total_cost.toLocaleString()}</td>
-                                  <td className="p-4 text-right font-mono text-emerald-400 font-bold">${record.total_profit.toLocaleString()}</td>
-                                  <td className="p-4 text-right text-gray-300">{record.order_count}</td>
-                                  <td className={`p-4 text-right font-mono font-bold ${record.inventory_variance < 0 ? 'text-red-400' : 'text-green-400'}`}>
-                                     {record.inventory_variance > 0 ? '+' : ''}{record.inventory_variance}
-                                  </td>
-                                  <td className="p-4 text-gray-500 truncate max-w-xs" title={record.note || ''}>{record.note || '-'}</td>
-                               </tr>
-                            ))
+                           historyRecords.map(record => (
+                              <tr key={record.id} className="hover:bg-gray-800/30 transition-colors">
+                                 <td className="p-4 font-bold text-gray-200">{record.date}</td>
+                                 <td className="p-4 text-right font-mono text-blue-300">${record.total_revenue.toLocaleString()}</td>
+                                 <td className="p-4 text-right font-mono text-gray-400">${record.total_cost.toLocaleString()}</td>
+                                 <td className="p-4 text-right font-mono text-emerald-400 font-bold">${record.total_profit.toLocaleString()}</td>
+                                 <td className="p-4 text-right text-gray-300">{record.order_count}</td>
+                                 <td className={`p-4 text-right font-mono font-bold ${record.inventory_variance < 0 ? 'text-red-400' : 'text-green-400'}`}>
+                                    {record.inventory_variance > 0 ? '+' : ''}{record.inventory_variance}
+                                 </td>
+                                 <td className="p-4 text-gray-500 truncate max-w-xs" title={record.note || ''}>{record.note || '-'}</td>
+                              </tr>
+                           ))
                          )}
                       </tbody>
                    </table>
