@@ -6,24 +6,23 @@ import { CartSidebar } from './components/CartSidebar';
 import { CustomWeightModal } from './components/CustomWeightModal';
 import { DashboardModal } from './components/DashboardModal';
 import { ComboModal } from './components/ComboModal';
-import { Settings, ChefHat, LayoutGrid } from 'lucide-react';
+import { PinModal } from './components/PinModal'; // 引入密碼鎖
+import { OrderHistoryModal } from './components/OrderHistoryModal'; // 引入阿姨用的歷史紀錄
+import { Settings, ChefHat, LayoutGrid, ClipboardList } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 
 const App: React.FC = () => {
   // --- Data State ---
-  // 使用你原本的 Key: pos_cart
   const [cart, setCart] = useState<CartItem[]>(() => {
     const saved = localStorage.getItem('pos_cart');
     return saved ? JSON.parse(saved) : [];
   });
   
   const [soldOutIds, setSoldOutIds] = useState<string[]>(() => {
-    // 這裡建議也加上持久化，以免重新整理後缺貨設定跑掉
     const saved = localStorage.getItem('pos_sold_out');
     return saved ? JSON.parse(saved) : [];
   });
   
-  // 使用你原本的 Key: pos_orders_today
   const [orders, setOrders] = useState<Order[]>(() => {
     const saved = localStorage.getItem('pos_orders_today');
     return saved ? JSON.parse(saved) : [];
@@ -48,6 +47,10 @@ const App: React.FC = () => {
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [isDashboardOpen, setIsDashboardOpen] = useState(false);
   const [isComboModalOpen, setIsComboModalOpen] = useState(false);
+  
+  // ✅ 新增控制開關
+  const [isPinModalOpen, setIsPinModalOpen] = useState(false);
+  const [isOrderHistoryOpen, setIsOrderHistoryOpen] = useState(false);
 
   // --- Core Logic ---
 
@@ -98,7 +101,6 @@ const App: React.FC = () => {
     setIsComboModalOpen(true);
   };
 
-  // 接收已經拆解好的 CartItem 陣列
   const handleConfirmCombo = (cartItems: CartItem[]) => {
     if (cartItems.length > 0) {
       setCart(prev => [...prev, ...cartItems]);
@@ -126,13 +128,8 @@ const App: React.FC = () => {
   };
 
   const handleCheckout = (received: number, method: PaymentMethod, customer?: Customer) => {
-    // ✅ 修改重點：處理報廢邏輯 (WASTE)
     const isWaste = method === 'WASTE';
-
-    // 如果是報廢，營收 (Revenue) 記為 0；否則正常計算
     const totalRevenue = isWaste ? 0 : cart.reduce((sum, item) => sum + item.price, 0);
-    
-    // 成本照常計算 (這樣 profit 就會變成負數，代表虧損)
     const totalCost = cart.reduce((sum, item) => sum + item.cost, 0);
 
     const newOrder: Order = {
@@ -158,7 +155,6 @@ const App: React.FC = () => {
     setOrders(prev => prev.filter(o => o.id !== orderId));
   };
 
-  // 日結時清空訂單的功能
   const handleClearAllOrders = () => {
     setOrders([]);
     localStorage.removeItem('pos_orders_today');
@@ -191,7 +187,7 @@ const App: React.FC = () => {
           </div>
           
           <div className="flex gap-4">
-             {/* Top Combo Button */}
+             {/* 綜合鯊魚煙 $200 */}
              <button 
                onClick={handleOpenComboModal}
                className="bg-yellow-400 hover:bg-yellow-500 text-yellow-900 px-8 py-3 rounded-xl font-black text-xl shadow-lg flex items-center gap-2 transform transition-transform active:scale-95 border-b-4 border-yellow-600"
@@ -199,17 +195,29 @@ const App: React.FC = () => {
                <LayoutGrid size={24} />
                綜合鯊魚煙 $200
              </button>
+
+             {/* ✅ 阿姨用的：今日訂單 (白色按鈕，無鎖) */}
              <button 
-              onClick={() => setIsDashboardOpen(true)}
+               onClick={() => setIsOrderHistoryOpen(true)}
+               className="p-3 rounded-xl bg-white border-2 border-blue-100 text-blue-600 hover:bg-blue-50 hover:border-blue-300 transition-all shadow-sm flex items-center gap-2"
+             >
+               <ClipboardList size={24} />
+               <span className="hidden md:inline font-bold">今日訂單</span>
+               {orders.length > 0 && <span className="bg-blue-600 text-white text-xs px-2 py-0.5 rounded-full">{orders.length}</span>}
+             </button>
+
+             {/* ✅ 老闆用的：後台設置 (黑色按鈕，有鎖) */}
+             <button 
+              onClick={() => setIsPinModalOpen(true)}
               className="p-3 rounded-xl bg-gray-800 text-white hover:bg-gray-700 relative"
             >
               <Settings size={24} />
-              {orders.length > 0 && <span className="absolute -top-1 -right-1 bg-blue-500 text-white text-[10px] w-5 h-5 flex items-center justify-center rounded-full border-2 border-white">{orders.length}</span>}
             </button>
           </div>
         </header>
 
         <div className="flex-1 overflow-y-auto p-4 flex gap-4">
+           {/* 左側商品區 */}
            <div className="flex-1 bg-green-50/50 rounded-2xl p-4 border border-green-100">
               <h2 className="text-green-800 font-black text-xl mb-4 flex items-center gap-2">
                  <span className="w-4 h-4 rounded-full bg-green-500"></span>
@@ -228,6 +236,7 @@ const App: React.FC = () => {
               </div>
            </div>
 
+           {/* 右側商品區 */}
            <div className="flex-1 bg-red-50/50 rounded-2xl p-4 border border-red-100">
               <h2 className="text-red-800 font-black text-xl mb-4 flex items-center gap-2">
                  <span className="w-4 h-4 rounded-full bg-red-500"></span>
@@ -268,6 +277,14 @@ const App: React.FC = () => {
         onConfirm={handleAddToCart}
       />
 
+      {/* ✅ 密碼鎖：密碼輸入正確後才會開啟 Dashboard */}
+      <PinModal 
+        isOpen={isPinModalOpen}
+        onClose={() => setIsPinModalOpen(false)}
+        onSuccess={() => setIsDashboardOpen(true)}
+        correctPin="8888" // 預設密碼
+      />
+
       <DashboardModal 
         isOpen={isDashboardOpen}
         onClose={() => setIsDashboardOpen(false)}
@@ -277,6 +294,14 @@ const App: React.FC = () => {
         onUpdateRemark={handleUpdateOrderRemark}
         onDeleteOrder={handleDeleteOrder}
         onClearAllOrders={handleClearAllOrders}
+      />
+
+      {/* ✅ 阿姨用的安全訂單查詢 (無鎖) */}
+      <OrderHistoryModal
+        isOpen={isOrderHistoryOpen}
+        onClose={() => setIsOrderHistoryOpen(false)}
+        orders={orders}
+        onDeleteOrder={handleDeleteOrder}
       />
 
       <ComboModal 
