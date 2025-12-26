@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Order, Product, InventoryRecord, DailyClosingRecord } from '../types';
 import { supabase } from '../lib/supabase';
-import { X, TrendingUp, List, BarChart3, Cloud, RefreshCw, Trash2, ClipboardList, Save, Calendar, Search, PieChart as PieChartIcon } from 'lucide-react';
+import { X, TrendingUp, List, BarChart3, Cloud, RefreshCw, Trash2, ClipboardList, Save, Calendar, Search, PieChart as PieChartIcon, Eye, User, Phone, FileText, Clock } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
 
 interface DashboardModalProps {
@@ -26,11 +26,9 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
   onClearAllOrders
 }) => {
   const [activeTab, setActiveTab] = useState<'overview' | 'reports' | 'inventory'>('overview');
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const [editingRemarkId, setEditingRemarkId] = useState<string | null>(null);
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const [remarkText, setRemarkText] = useState('');
-  
+  // 追蹤當前正在查看詳情的訂單
+  const [viewingOrder, setViewingOrder] = useState<Order | null>(null);
+
   // Inventory State
   const [inventoryData, setInventoryData] = useState<Record<string, InventoryRecord>>({});
 
@@ -54,23 +52,18 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
     return products.map(product => {
       const record = inventoryData[product.id] || { opening: 0, closing: 0, waste: 0 };
       
-      // ✅ 邏輯修改：這裡計算出的 salesQty 是使用者輸入的單位 (秤重=台斤, 固定=個)
       const salesQty = Math.max(0, record.opening - record.closing - record.waste);
       
       const isFixedUnit = (product.fixedPrices && product.fixedPrices.length > 0) || product.id === 'ss_combo_200';
       
-      // 參考價格：如果是固定單位就是單價，如果是秤重就是「每台斤售價」
       const refPrice = isFixedUnit 
         ? (product.fixedPrices ? product.fixedPrices[0].price : 200) 
         : product.defaultSellingPricePer600g;
 
       let estRevenue = 0;
       if (isFixedUnit) {
-        // 固定單位 (個)：數量 x 單價
         estRevenue = salesQty * refPrice;
       } else {
-        // ✅ 秤重單位 (台斤)：因為 salesQty 已經是台斤了，直接 x 每斤售價
-        // 不用再除以 600 了！
         estRevenue = salesQty * refPrice;
       }
 
@@ -85,25 +78,22 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
 
       const diff = actualRevenue - Math.round(estRevenue);
 
-      // 為了顯示方便，計算一個「系統紀錄的銷售量 (轉成台斤/個)」
-      // 這樣阿姨可以看出「系統覺得賣了幾斤」vs「我實際少了幾斤」
       const systemSoldGrams = orders.reduce((sum, order) => {
-         // 包含 WASTE 也要算進去系統扣除的量，這樣比對庫存才準
          const items = order.items.filter(item => item.productId === product.id);
          return sum + items.reduce((iSum, i) => iSum + (i.weightGrams || 0), 0);
       }, 0);
       
       const systemSoldUnit = isFixedUnit 
         ? orders.reduce((sum, order) => sum + order.items.filter(i => i.productId === product.id).reduce((q, i) => q + i.quantity, 0), 0)
-        : Number((systemSoldGrams / 600).toFixed(2)); // ✅ 公克轉台斤
+        : Number((systemSoldGrams / 600).toFixed(2));
 
       return {
         product,
         record,
         isFixedUnit,
         refPrice,
-        salesQty,     // 實際盤點出的銷售量 (台斤/個)
-        systemSoldUnit, // 系統紀錄的銷售量 (台斤/個)
+        salesQty,     
+        systemSoldUnit, 
         estRevenue: Math.round(estRevenue),
         actualRevenue,
         diff
@@ -228,7 +218,7 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
 
   return (
     <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4 sm:p-6">
-      <div className="bg-gray-900 text-white rounded-3xl w-full max-w-7xl h-[92vh] flex flex-col shadow-2xl border border-gray-700 overflow-hidden">
+      <div className="bg-gray-900 text-white rounded-3xl w-full max-w-7xl h-[92vh] flex flex-col shadow-2xl border border-gray-700 overflow-hidden relative">
         
         {/* Header */}
         <div className="p-6 border-b border-gray-700 flex justify-between items-center bg-gray-800/50">
@@ -329,8 +319,8 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
                   <div className="overflow-y-auto no-scrollbar space-y-2 flex-1">
                     {orders.length === 0 ? <p className="text-gray-500 italic">尚無訂單</p> : 
                       orders.map(order => (
-                          <div key={order.id} className="bg-gray-900/50 p-3 rounded-xl border border-gray-700 flex justify-between items-center">
-                            <div>
+                          <div key={order.id} className="bg-gray-900/50 p-3 rounded-xl border border-gray-700 flex justify-between items-center group hover:bg-gray-800 transition-colors">
+                            <div className="flex-1">
                                <div className="flex gap-2 items-center mb-1">
                                  <span className="text-xs font-mono text-gray-500">{new Date(order.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
                                  {order.paymentMethod === 'WASTE' ? (
@@ -340,16 +330,33 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
                                       {order.paymentMethod === 'LINE_PAY' ? 'LINE' : '現金'}
                                     </span>
                                  )}
+                                 {/* 顯示有客資的標記 */}
+                                 {order.customer && (order.customer.name || order.customer.phone) && (
+                                   <span className="text-[10px] bg-indigo-900 text-indigo-300 px-1.5 py-0.5 rounded flex items-center gap-1">
+                                     <User size={10} /> {order.customer.name || '客戶'}
+                                   </span>
+                                 )}
                                </div>
                                <div className={`text-sm font-bold ${order.paymentMethod === 'WASTE' ? 'text-red-400 line-through' : 'text-gray-300'}`}>
                                   ${order.totalPrice} 
                                   <span className="text-xs font-normal text-gray-500 ml-2">({order.items.length} 項)</span>
                                </div>
-                               {order.paymentMethod === 'WASTE' && (
-                                 <div className="text-xs text-red-500 font-bold">成本: -${order.totalCost}</div>
-                               )}
                             </div>
-                            <button onClick={() => handleDeleteClick(order.id)} className="text-red-900 hover:text-red-500 p-2"><Trash2 size={16}/></button>
+                            <div className="flex gap-2">
+                               {/* 檢視按鈕 */}
+                               <button 
+                                 onClick={() => setViewingOrder(order)} 
+                                 className="text-gray-400 hover:text-white p-2 bg-gray-800 rounded-lg border border-gray-700 hover:bg-gray-700"
+                               >
+                                 <Eye size={18} />
+                               </button>
+                               <button 
+                                 onClick={() => handleDeleteClick(order.id)} 
+                                 className="text-red-900 hover:text-red-500 p-2 opacity-50 hover:opacity-100 transition-opacity"
+                               >
+                                 <Trash2 size={18} />
+                               </button>
+                            </div>
                           </div>
                       ))
                     }
@@ -512,11 +519,9 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
                                     onChange={(e) => handleInventoryChange(row.product.id, 'waste', e.target.value)}
                                  />
                               </td>
-                              {/* 盤點出的銷售量 */}
                               <td className="p-4 text-right font-mono font-bold text-blue-300 bg-gray-800/20">
                                  {row.salesQty} {row.isFixedUnit ? '' : '斤'}
                               </td>
-                              {/* 系統紀錄的銷售量 (參考用) */}
                               <td className="p-4 text-right font-mono text-gray-500 text-xs">
                                  {row.systemSoldUnit} {row.isFixedUnit ? '' : '斤'}
                               </td>
@@ -562,6 +567,118 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
           )}
         </div>
       </div>
+
+      {/* --- 新增：訂單詳情彈窗 Overlay --- */}
+      {viewingOrder && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden text-gray-900">
+             {/* Modal Header */}
+             <div className="bg-gray-800 text-white p-4 flex justify-between items-center">
+                <div>
+                   <h3 className="font-bold text-lg flex items-center gap-2">
+                     <FileText size={20} className="text-blue-400"/>
+                     訂單詳情
+                   </h3>
+                   <p className="text-xs text-gray-400 flex items-center gap-1 mt-1">
+                     <Clock size={12}/>
+                     {new Date(viewingOrder.timestamp).toLocaleString()}
+                   </p>
+                </div>
+                <button onClick={() => setViewingOrder(null)} className="p-2 hover:bg-gray-700 rounded-full transition-colors">
+                  <X size={20}/>
+                </button>
+             </div>
+
+             {/* Modal Body */}
+             <div className="p-0 max-h-[70vh] overflow-y-auto bg-gray-50">
+                {/* 1. 客戶資料區塊 */}
+                {viewingOrder.customer && (viewingOrder.customer.name || viewingOrder.customer.phone) && (
+                  <div className="p-4 bg-indigo-50 border-b border-indigo-100">
+                     <h4 className="text-xs font-bold text-indigo-800 uppercase mb-2 flex items-center gap-1">
+                       <User size={14}/> 客戶資料
+                     </h4>
+                     <div className="flex gap-4">
+                        {viewingOrder.customer.name && (
+                          <div>
+                            <span className="text-xs text-indigo-400">姓名</span>
+                            <p className="font-bold text-indigo-900">{viewingOrder.customer.name}</p>
+                          </div>
+                        )}
+                        {viewingOrder.customer.phone && (
+                          <div>
+                            <span className="text-xs text-indigo-400">電話</span>
+                            <p className="font-bold text-indigo-900 flex items-center gap-1">
+                              <Phone size={12}/> {viewingOrder.customer.phone}
+                            </p>
+                          </div>
+                        )}
+                     </div>
+                  </div>
+                )}
+
+                {/* 2. 商品列表 */}
+                <div className="p-4">
+                   <h4 className="text-xs font-bold text-gray-400 uppercase mb-2">購買項目</h4>
+                   <div className="space-y-2">
+                     {viewingOrder.items.map((item, idx) => (
+                       <div key={idx} className="bg-white p-3 rounded-lg border border-gray-200 shadow-sm">
+                          <div className="flex justify-between items-start">
+                             <div>
+                                <p className="font-bold text-gray-800">
+                                  {item.productName} 
+                                  <span className="text-gray-400 text-xs font-normal ml-1">x{item.quantity}</span>
+                                </p>
+                                {item.modifiers && item.modifiers.length > 0 && (
+                                  <div className="flex flex-wrap gap-1 mt-1">
+                                    {item.modifiers.map(m => (
+                                      <span key={m} className="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{m}</span>
+                                    ))}
+                                  </div>
+                                )}
+                             </div>
+                             <p className="font-bold text-gray-700">${item.price}</p>
+                          </div>
+                       </div>
+                     ))}
+                   </div>
+                </div>
+
+                {/* 3. 備註區塊 (唯讀) */}
+                {viewingOrder.remarks && (
+                   <div className="px-4 pb-4">
+                      <h4 className="text-xs font-bold text-gray-400 uppercase mb-1">備註</h4>
+                      <div className="bg-yellow-50 text-yellow-800 p-3 rounded-lg text-sm border border-yellow-100">
+                        {viewingOrder.remarks}
+                      </div>
+                   </div>
+                )}
+             </div>
+
+             {/* Modal Footer */}
+             <div className="p-4 bg-white border-t border-gray-200">
+                <div className="flex justify-between items-center mb-1">
+                   <span className="text-sm font-bold text-gray-500">支付方式</span>
+                   <span className={`text-sm font-bold px-2 py-0.5 rounded ${
+                     viewingOrder.paymentMethod === 'LINE_PAY' ? 'bg-green-100 text-green-700' : 
+                     viewingOrder.paymentMethod === 'WASTE' ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-700'
+                   }`}>
+                     {viewingOrder.paymentMethod === 'LINE_PAY' ? 'LINE Pay' : 
+                      viewingOrder.paymentMethod === 'WASTE' ? '損耗/報廢' : '現金'}
+                   </span>
+                </div>
+                <div className="flex justify-between items-center text-xl">
+                   <span className="font-black text-gray-800">總金額</span>
+                   <span className={`font-black ${viewingOrder.paymentMethod === 'WASTE' ? 'text-red-500 line-through' : 'text-blue-600'}`}>
+                     ${viewingOrder.totalPrice}
+                   </span>
+                </div>
+                {viewingOrder.paymentMethod === 'WASTE' && (
+                  <p className="text-center text-xs text-red-500 font-bold mt-2">此訂單不計入營收</p>
+                )}
+             </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
