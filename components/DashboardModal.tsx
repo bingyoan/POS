@@ -7,7 +7,7 @@ import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recha
 interface DashboardModalProps {
   isOpen: boolean;
   onClose: () => void;
-  orders: Order[]; // 從 App 傳來的本地訂單
+  orders: Order[];
   soldOutIds: string[];
   products: Product[];
   onUpdateRemark: (orderId: string, remark: string) => void;
@@ -18,7 +18,7 @@ interface DashboardModalProps {
 export const DashboardModal: React.FC<DashboardModalProps> = ({ 
   isOpen, 
   onClose, 
-  orders: localOrders, // 重新命名為 localOrders
+  orders: localOrders,
   soldOutIds, 
   products, 
   onUpdateRemark, 
@@ -28,11 +28,10 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
   const [activeTab, setActiveTab] = useState<'overview' | 'reports' | 'inventory'>('overview');
   const [viewingOrder, setViewingOrder] = useState<Order | null>(null);
 
-  // --- 新增：雲端資料同步 ---
+  // --- 雲端資料同步 ---
   const [remoteOrders, setRemoteOrders] = useState<Order[] | null>(null);
   const [loadingRemote, setLoadingRemote] = useState(false);
 
-  // 核心邏輯：如果有抓到雲端資料就用雲端的，否則用本地的
   const ordersToUse = remoteOrders || localOrders;
 
   // Inventory State
@@ -63,11 +62,10 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
 
       if (error) throw error;
 
-      // 轉換資料格式
       const formattedOrders: Order[] = (data || []).map(row => ({
         id: row.id,
         timestamp: new Date(row.created_at).getTime(),
-        items: row.content, // JSONB
+        items: row.content,
         totalPrice: row.total_price,
         totalCost: row.total_cost,
         totalProfit: row.total_profit,
@@ -96,7 +94,12 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
       
       const salesQty = Math.max(0, record.opening - record.closing - record.waste);
       
-      const isFixedUnit = (product.fixedPrices && product.fixedPrices.length > 0) || product.id === 'ss_combo_200';
+      // ✅ 關鍵修改：強制小魚乾 (sd_driedfish) 不視為固定單位，改用秤重邏輯
+      const isFixedUnit = (
+        product.fixedPrices && 
+        product.fixedPrices.length > 0 && 
+        product.id !== 'sd_driedfish' 
+      ) || product.id === 'ss_combo_200';
       
       const refPrice = isFixedUnit 
         ? (product.fixedPrices ? product.fixedPrices[0].price : 200) 
@@ -109,7 +112,6 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
         estRevenue = salesQty * refPrice;
       }
 
-      // 使用 ordersToUse 計算
       const actualRevenue = ordersToUse.reduce((sum, order) => {
         if (order.paymentMethod === 'WASTE') return sum;
 
@@ -121,9 +123,17 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
 
       const diff = actualRevenue - Math.round(estRevenue);
 
+      // 系統銷量計算
       const systemSoldGrams = ordersToUse.reduce((sum, order) => {
          const items = order.items.filter(item => item.productId === product.id);
-         return sum + items.reduce((iSum, i) => iSum + (i.weightGrams || 0), 0);
+         return sum + items.reduce((iSum, i) => {
+            if (i.weightGrams) return iSum + i.weightGrams;
+            // 自動換算：如果是小魚乾按了按鈕，用金額反推重量
+            if (i.price && product.defaultSellingPricePer600g > 0) {
+              return iSum + (i.price / product.defaultSellingPricePer600g) * 600;
+            }
+            return iSum;
+         }, 0);
       }, 0);
       
       const systemSoldUnit = isFixedUnit 
@@ -308,8 +318,7 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
             <div className="h-full overflow-y-auto p-6 grid grid-cols-1 lg:grid-cols-2 gap-6 no-scrollbar">
               <div className="space-y-6">
                 <div className="bg-gray-800/50 rounded-2xl p-6 border border-gray-700 space-y-6">
-                  
-                  {/* ✅ 按鈕加在這裡！ */}
+                  {/* Header Title with Sync Button */}
                   <h3 className="text-gray-400 font-bold uppercase text-xs tracking-widest flex justify-between items-center">
                     本日即時營收
                     <button 
@@ -636,6 +645,7 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
       {viewingOrder && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden text-gray-900">
+             {/* Modal Header */}
              <div className="bg-gray-800 text-white p-4 flex justify-between items-center">
                 <div>
                    <h3 className="font-bold text-lg flex items-center gap-2">
@@ -652,7 +662,9 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
                 </button>
              </div>
 
+             {/* Modal Body */}
              <div className="p-0 max-h-[70vh] overflow-y-auto bg-gray-50">
+                {/* 1. 客戶資料區塊 */}
                 {viewingOrder.customer && (viewingOrder.customer.name || viewingOrder.customer.phone) && (
                   <div className="p-4 bg-indigo-50 border-b border-indigo-100">
                      <h4 className="text-xs font-bold text-indigo-800 uppercase mb-2 flex items-center gap-1">
@@ -677,6 +689,7 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
                   </div>
                 )}
 
+                {/* 2. 商品列表 */}
                 <div className="p-4">
                    <h4 className="text-xs font-bold text-gray-400 uppercase mb-2">購買項目</h4>
                    <div className="space-y-2">
@@ -703,6 +716,7 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
                    </div>
                 </div>
 
+                {/* 3. 備註區塊 (唯讀) */}
                 {viewingOrder.remarks && (
                    <div className="px-4 pb-4">
                       <h4 className="text-xs font-bold text-gray-400 uppercase mb-1">備註</h4>
@@ -713,6 +727,7 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
                 )}
              </div>
 
+             {/* Modal Footer */}
              <div className="p-4 bg-white border-t border-gray-200">
                 <div className="flex justify-between items-center mb-1">
                    <span className="text-sm font-bold text-gray-500">支付方式</span>
