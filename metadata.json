@@ -1,0 +1,5 @@
+{
+  "name": "Street Food POS (Shark & Sides)",
+  "description": "A tailored Point of Sale system for a Taiwanese street food stall specializing in Small Dishes and Smoked Shark, featuring custom weighing pricing, combo deals, and profit analytics powered by Gemini.",
+  "requestFramePermissions": []
+}
