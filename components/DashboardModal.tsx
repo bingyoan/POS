@@ -12,7 +12,6 @@ interface DashboardModalProps {
   products: Product[];
   onUpdateRemark: (orderId: string, remark: string) => void;
   onDeleteOrder: (orderId: string) => void;
-  // ✅ 新增：接收清空訂單的函數
   onClearAllOrders: () => void;
 }
 
@@ -24,7 +23,7 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
   products, 
   onUpdateRemark, 
   onDeleteOrder,
-  onClearAllOrders // ✅ 解構出來
+  onClearAllOrders
 }) => {
   const [activeTab, setActiveTab] = useState<'overview' | 'reports' | 'inventory'>('overview');
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -38,7 +37,7 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
   // History Report State
   const [startDate, setStartDate] = useState(() => {
     const d = new Date();
-    d.setDate(d.getDate() - 7); // Default last 7 days
+    d.setDate(d.getDate() - 7); 
     return d.toISOString().split('T')[0];
   });
   const [endDate, setEndDate] = useState(() => new Date().toISOString().split('T')[0]);
@@ -46,7 +45,7 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [isClosingDay, setIsClosingDay] = useState(false);
 
-  // --- Calculations (Must be before early return) ---
+  // --- Calculations ---
 
   // Inventory Rows Logic
   const inventoryRows = useMemo(() => {
@@ -54,21 +53,28 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
 
     return products.map(product => {
       const record = inventoryData[product.id] || { opening: 0, closing: 0, waste: 0 };
+      
+      // ✅ 邏輯修改：這裡計算出的 salesQty 是使用者輸入的單位 (秤重=台斤, 固定=個)
       const salesQty = Math.max(0, record.opening - record.closing - record.waste);
+      
       const isFixedUnit = (product.fixedPrices && product.fixedPrices.length > 0) || product.id === 'ss_combo_200';
+      
+      // 參考價格：如果是固定單位就是單價，如果是秤重就是「每台斤售價」
       const refPrice = isFixedUnit 
         ? (product.fixedPrices ? product.fixedPrices[0].price : 200) 
         : product.defaultSellingPricePer600g;
 
       let estRevenue = 0;
       if (isFixedUnit) {
+        // 固定單位 (個)：數量 x 單價
         estRevenue = salesQty * refPrice;
       } else {
-        estRevenue = (salesQty / 600) * refPrice;
+        // ✅ 秤重單位 (台斤)：因為 salesQty 已經是台斤了，直接 x 每斤售價
+        // 不用再除以 600 了！
+        estRevenue = salesQty * refPrice;
       }
 
       const actualRevenue = orders.reduce((sum, order) => {
-        // 排除報廢訂單 (營收為0，不應計入實際營收比較，但庫存已扣)
         if (order.paymentMethod === 'WASTE') return sum;
 
         const productTotal = order.items
@@ -79,12 +85,25 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
 
       const diff = actualRevenue - Math.round(estRevenue);
 
+      // 為了顯示方便，計算一個「系統紀錄的銷售量 (轉成台斤/個)」
+      // 這樣阿姨可以看出「系統覺得賣了幾斤」vs「我實際少了幾斤」
+      const systemSoldGrams = orders.reduce((sum, order) => {
+         // 包含 WASTE 也要算進去系統扣除的量，這樣比對庫存才準
+         const items = order.items.filter(item => item.productId === product.id);
+         return sum + items.reduce((iSum, i) => iSum + (i.weightGrams || 0), 0);
+      }, 0);
+      
+      const systemSoldUnit = isFixedUnit 
+        ? orders.reduce((sum, order) => sum + order.items.filter(i => i.productId === product.id).reduce((q, i) => q + i.quantity, 0), 0)
+        : Number((systemSoldGrams / 600).toFixed(2)); // ✅ 公克轉台斤
+
       return {
         product,
         record,
         isFixedUnit,
         refPrice,
-        salesQty,
+        salesQty,     // 實際盤點出的銷售量 (台斤/個)
+        systemSoldUnit, // 系統紀錄的銷售量 (台斤/個)
         estRevenue: Math.round(estRevenue),
         actualRevenue,
         diff
@@ -96,7 +115,6 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
       return inventoryRows.reduce((sum, row) => sum + row.diff, 0);
   }, [inventoryRows]);
 
-  // ✅ 新增：計算本日系統登記的損耗總成本 (來自報廢按鈕)
   const totalWasteCost = useMemo(() => {
     return orders
       .filter(o => o.paymentMethod === 'WASTE')
@@ -135,7 +153,6 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
     }
   };
 
-  // Trigger fetch when switching to reports tab
   useEffect(() => {
     if (isOpen && activeTab === 'reports') {
       handleFetchHistory();
@@ -147,7 +164,6 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
     
     setIsClosingDay(true);
     
-    // Calculate Today's Totals
     const totalSalesCash = orders.filter(o => o.paymentMethod === 'CASH').reduce((sum, o) => sum + o.totalPrice, 0);
     const totalSalesLine = orders.filter(o => o.paymentMethod === 'LINE_PAY').reduce((sum, o) => sum + o.totalPrice, 0);
     const totalRevenue = totalSalesCash + totalSalesLine;
@@ -161,13 +177,11 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
       total_profit: totalProfit,
       total_cost: totalCost,
       order_count: orders.length,
-      // 如果有做盤點(totalInventoryDiff != 0)則使用盤點差異，否則使用系統記錄的損耗成本
       inventory_variance: totalInventoryDiff !== 0 ? totalInventoryDiff : -totalWasteCost, 
       note: `日結 - 現金:${totalSalesCash}, LINE:${totalSalesLine}, 系統損耗:${totalWasteCost}`
     };
 
     try {
-      // Upsert logic
       const { error } = await supabase
         .from('daily_closings')
         .upsert(record, { onConflict: 'date' });
@@ -175,8 +189,6 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
       if (error) throw error;
 
       alert(`✅ ${todayStr} 結帳成功！\n資料已同步，本日訂單將自動清空。`);
-      
-      // ✅ 結帳成功後，呼叫清空訂單並關閉視窗
       onClearAllOrders();
       onClose();
 
@@ -188,18 +200,6 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
     }
   };
 
-  /*
-  const startEditRemark = (order: Order) => {
-    setEditingRemarkId(order.id);
-    setRemarkText(order.remarks || '');
-  };
-
-  const saveRemark = (orderId: string) => {
-    onUpdateRemark(orderId, remarkText);
-    setEditingRemarkId(null);
-  };
-  */
-
   const handleDeleteClick = (orderId: string) => {
     if (window.confirm('確定要刪除這筆交易紀錄嗎？\n刪除後營收金額將會扣除，且無法復原。')) {
       onDeleteOrder(orderId);
@@ -207,26 +207,22 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
   };
 
   const handleExportInventory = () => {
-    console.log("Current Inventory State:", inventoryData);
-    console.log("Calculated Inventory Rows:", inventoryRows);
+    console.log("Inventory Rows:", inventoryRows);
     alert("庫存資料已輸出至 Console");
   };
 
-  // --- EARLY RETURN ---
   if (!isOpen) return null;
 
-  // --- Overview Calculations ---
   const totalSalesCash = orders.filter(o => o.paymentMethod === 'CASH').reduce((sum, o) => sum + o.totalPrice, 0);
   const totalSalesLine = orders.filter(o => o.paymentMethod === 'LINE_PAY').reduce((sum, o) => sum + o.totalPrice, 0);
   const totalRevenue = totalSalesCash + totalSalesLine;
-  const totalProfit = orders.reduce((sum, o) => sum + o.totalProfit, 0); // 已包含扣除損耗成本
+  const totalProfit = orders.reduce((sum, o) => sum + o.totalProfit, 0);
 
   const paymentData = [
     { name: '現金', value: totalSalesCash, color: '#10b981' },
     { name: 'Line Pay', value: totalSalesLine, color: '#00b900' },
   ];
 
-  // --- History Aggregations ---
   const historyTotalRevenue = historyRecords.reduce((sum, r) => sum + r.total_revenue, 0);
   const historyTotalProfit = historyRecords.reduce((sum, r) => sum + r.total_profit, 0);
 
@@ -273,17 +269,13 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
           {/* TAB 1: OVERVIEW */}
           {activeTab === 'overview' && (
             <div className="h-full overflow-y-auto p-6 grid grid-cols-1 lg:grid-cols-2 gap-6 no-scrollbar">
-              {/* Left Column */}
               <div className="space-y-6">
-                {/* Revenue Summary */}
                 <div className="bg-gray-800/50 rounded-2xl p-6 border border-gray-700 space-y-6">
                   <h3 className="text-gray-400 font-bold uppercase text-xs tracking-widest">本日即時營收</h3>
                   <div>
                     <span className="text-5xl font-black text-blue-400">${totalRevenue.toLocaleString()}</span>
                     <p className="text-gray-500 text-xs mt-1 font-bold">總營業額 (TWD)</p>
                   </div>
-                  
-                  {/* ✅ 修改：預估利潤 + 損耗成本 並排顯示 */}
                   <div className="grid grid-cols-2 gap-4">
                     <div className="bg-blue-900/20 p-4 rounded-xl border border-blue-900/30">
                       <p className="text-blue-300 text-sm font-bold">預估淨利</p>
@@ -296,7 +288,6 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
                   </div>
                 </div>
 
-                {/* Payment Breakdown */}
                 <div className="bg-gray-800/50 rounded-2xl p-6 border border-gray-700 flex flex-col h-80">
                    <h3 className="text-gray-400 font-bold mb-4 uppercase text-xs tracking-widest flex items-center gap-2">
                       <PieChartIcon size={14} className="text-purple-400" /> 支付方式佔比
@@ -330,9 +321,7 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
                 </div>
               </div>
 
-              {/* Right Column */}
               <div className="space-y-6">
-                {/* Current Orders List (Mini) */}
                 <div className="bg-gray-800/50 rounded-2xl p-6 border border-gray-700 flex-1 h-[600px] flex flex-col">
                   <h3 className="text-gray-400 font-bold mb-4 uppercase text-xs tracking-widest flex items-center gap-2">
                     <List size={14} className="text-green-500" /> 本日訂單紀錄 ({orders.length})
@@ -344,7 +333,6 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
                             <div>
                                <div className="flex gap-2 items-center mb-1">
                                  <span className="text-xs font-mono text-gray-500">{new Date(order.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
-                                 {/* 顯示支付方式標籤 */}
                                  {order.paymentMethod === 'WASTE' ? (
                                     <span className="text-[10px] px-1.5 py-0.5 rounded border border-red-800 text-red-500">損耗</span>
                                  ) : (
@@ -371,10 +359,9 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
             </div>
           )}
 
-          {/* TAB 2: REPORTS (SUPABASE) */}
+          {/* TAB 2: REPORTS */}
           {activeTab === 'reports' && (
              <div className="h-full flex flex-col p-6">
-                {/* Filters */}
                 <div className="bg-gray-800 rounded-xl p-4 mb-6 flex flex-wrap items-center gap-4 border border-gray-700">
                    <div className="flex items-center gap-2">
                       <Calendar size={18} className="text-blue-400" />
@@ -403,7 +390,6 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
                    </button>
                 </div>
 
-                {/* Summary Cards */}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
                    <div className="bg-gradient-to-br from-blue-900/40 to-gray-900 border border-blue-500/30 p-4 rounded-xl">
                       <p className="text-blue-300 text-xs font-bold uppercase">區間總營收</p>
@@ -415,7 +401,6 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
                    </div>
                 </div>
 
-                {/* Data Table */}
                 <div className="flex-1 overflow-auto rounded-xl border border-gray-700/50 shadow-inner bg-gray-900/50 no-scrollbar relative">
                    {loadingHistory && (
                      <div className="absolute inset-0 bg-gray-900/80 z-20 flex items-center justify-center">
@@ -464,7 +449,11 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
                <div className="bg-blue-900/20 border border-blue-900/50 p-4 rounded-xl mb-4 flex justify-between items-center shrink-0">
                   <div className="text-sm text-blue-200">
                      <p className="font-bold">盤點說明</p>
-                     <p className="opacity-70">請輸入期初、期末與損耗數量。系統將自動計算銷售量並與實際 POS 營收比對。</p>
+                     <p className="opacity-70">
+                       請輸入
+                       <span className="text-yellow-400 font-bold mx-1">台斤</span>
+                       (固定單位輸入個數)。系統將自動換算。
+                     </p>
                   </div>
                   <button 
                     onClick={handleExportInventory}
@@ -479,10 +468,11 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
                      <thead className="bg-gray-800 sticky top-0 z-10 text-xs uppercase text-gray-400 font-bold tracking-wider">
                         <tr>
                            <th className="p-4 border-b border-gray-700 min-w-[140px]">商品名稱</th>
-                           <th className="p-4 border-b border-gray-700 text-center w-24">期初</th>
-                           <th className="p-4 border-b border-gray-700 text-center w-24">期末</th>
-                           <th className="p-4 border-b border-gray-700 text-center w-24">損耗</th>
-                           <th className="p-4 border-b border-gray-700 text-right bg-gray-800/80">銷售量</th>
+                           <th className="p-4 border-b border-gray-700 text-center w-24 text-yellow-500">期初</th>
+                           <th className="p-4 border-b border-gray-700 text-center w-24 text-yellow-500">期末</th>
+                           <th className="p-4 border-b border-gray-700 text-center w-24 text-red-400">損耗</th>
+                           <th className="p-4 border-b border-gray-700 text-right bg-gray-800/80 text-blue-300">盤點量</th>
+                           <th className="p-4 border-b border-gray-700 text-right text-gray-500">系統銷量</th>
                            <th className="p-4 border-b border-gray-700 text-right">預估營收</th>
                            <th className="p-4 border-b border-gray-700 text-right">實際營收</th>
                            <th className="p-4 border-b border-gray-700 text-right">差異金額</th>
@@ -493,12 +483,12 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
                            <tr key={row.product.id} className="hover:bg-gray-800/30 transition-colors">
                               <td className="p-4 font-bold text-gray-200">
                                  {row.product.name}
-                                 <div className="text-[10px] text-gray-500 font-normal">{row.isFixedUnit ? '(單位: 份)' : '(單位: 克)'}</div>
+                                 <div className="text-[10px] text-gray-500 font-normal">{row.isFixedUnit ? '(單位: 份)' : '(單位: 台斤)'}</div>
                               </td>
                               <td className="p-2 text-center">
                                  <input 
                                     type="number" 
-                                    className="w-20 bg-gray-800 border border-gray-600 rounded p-1 text-center focus:border-blue-500 focus:outline-none text-white font-mono"
+                                    className="w-20 bg-gray-800 border border-gray-600 rounded p-1 text-center focus:border-yellow-500 focus:outline-none text-white font-mono"
                                     value={row.record.opening || ''}
                                     placeholder="0"
                                     onChange={(e) => handleInventoryChange(row.product.id, 'opening', e.target.value)}
@@ -507,7 +497,7 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
                               <td className="p-2 text-center">
                                  <input 
                                     type="number" 
-                                    className="w-20 bg-gray-800 border border-gray-600 rounded p-1 text-center focus:border-blue-500 focus:outline-none text-white font-mono"
+                                    className="w-20 bg-gray-800 border border-gray-600 rounded p-1 text-center focus:border-yellow-500 focus:outline-none text-white font-mono"
                                     value={row.record.closing || ''}
                                     placeholder="0"
                                     onChange={(e) => handleInventoryChange(row.product.id, 'closing', e.target.value)}
@@ -516,14 +506,19 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
                               <td className="p-2 text-center">
                                  <input 
                                     type="number" 
-                                    className="w-20 bg-gray-800 border border-gray-600 rounded p-1 text-center focus:border-blue-500 focus:outline-none text-white font-mono"
+                                    className="w-20 bg-gray-800 border border-gray-600 rounded p-1 text-center focus:border-red-500 focus:outline-none text-white font-mono"
                                     value={row.record.waste || ''}
                                     placeholder="0"
                                     onChange={(e) => handleInventoryChange(row.product.id, 'waste', e.target.value)}
                                  />
                               </td>
+                              {/* 盤點出的銷售量 */}
                               <td className="p-4 text-right font-mono font-bold text-blue-300 bg-gray-800/20">
-                                 {row.salesQty}
+                                 {row.salesQty} {row.isFixedUnit ? '' : '斤'}
+                              </td>
+                              {/* 系統紀錄的銷售量 (參考用) */}
+                              <td className="p-4 text-right font-mono text-gray-500 text-xs">
+                                 {row.systemSoldUnit} {row.isFixedUnit ? '' : '斤'}
                               </td>
                               <td className="p-4 text-right font-mono text-gray-400">
                                  ${row.estRevenue.toLocaleString()}
@@ -539,7 +534,7 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
                      </tbody>
                      <tfoot className="bg-gray-800 sticky bottom-0 z-10 font-bold border-t border-gray-600">
                         <tr>
-                           <td colSpan={7} className="p-4 text-right text-gray-300">本日總盤點差異金額</td>
+                           <td colSpan={8} className="p-4 text-right text-gray-300">本日總盤點差異金額</td>
                            <td className={`p-4 text-right font-black text-lg ${totalInventoryDiff < 0 ? 'text-red-400' : totalInventoryDiff > 0 ? 'text-green-400' : 'text-white'}`}>
                               {totalInventoryDiff > 0 ? '+' : ''}{totalInventoryDiff.toLocaleString()}
                            </td>
