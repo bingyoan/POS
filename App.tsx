@@ -10,6 +10,7 @@ import { PinModal } from './components/PinModal'; // 引入密碼鎖
 import { OrderHistoryModal } from './components/OrderHistoryModal'; // 引入阿姨用的歷史紀錄
 import { Settings, ChefHat, LayoutGrid, ClipboardList } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
+import { supabase } from './lib/supabase'; // 引入 Supabase 進行雲端同步
 
 const App: React.FC = () => {
   // --- Data State ---
@@ -127,10 +128,11 @@ const App: React.FC = () => {
     }));
   };
 
-  const handleCheckout = (received: number, method: PaymentMethod, customer?: Customer) => {
+  const handleCheckout = async (received: number, method: PaymentMethod, customer?: Customer) => {
     const isWaste = method === 'WASTE';
     const totalRevenue = isWaste ? 0 : cart.reduce((sum, item) => sum + item.price, 0);
     const totalCost = cart.reduce((sum, item) => sum + item.cost, 0);
+    const todayStr = new Date().toISOString().split('T')[0];
 
     const newOrder: Order = {
       id: uuidv4(),
@@ -143,16 +145,43 @@ const App: React.FC = () => {
       customer: customer && (customer.name || customer.phone) ? customer : undefined
     };
 
+    // 1. 本地更新 (快速回應)
     setOrders([newOrder, ...orders]);
     setCart([]);
+
+    // 2. 雲端備份 (背景執行)
+    try {
+      await supabase.from('orders').insert({
+        id: newOrder.id,
+        date: todayStr,
+        content: newOrder.items, // JSONB
+        total_price: newOrder.totalPrice,
+        total_cost: newOrder.totalCost,
+        total_profit: newOrder.totalProfit,
+        payment_method: newOrder.paymentMethod,
+        customer: newOrder.customer,
+        remarks: newOrder.remarks
+      });
+    } catch (error) {
+      console.error('雲端備份失敗:', error);
+      // 不阻擋 UI，讓阿姨繼續操作
+    }
   };
 
   const handleUpdateOrderRemark = (orderId: string, remark: string) => {
     setOrders(prev => prev.map(o => o.id === orderId ? { ...o, remarks: remark } : o));
   };
   
-  const handleDeleteOrder = (orderId: string) => {
+  const handleDeleteOrder = async (orderId: string) => {
+    // 1. 本地刪除
     setOrders(prev => prev.filter(o => o.id !== orderId));
+
+    // 2. 雲端同步刪除
+    try {
+      await supabase.from('orders').delete().eq('id', orderId);
+    } catch (error) {
+      console.error('雲端刪除失敗:', error);
+    }
   };
 
   const handleClearAllOrders = () => {
