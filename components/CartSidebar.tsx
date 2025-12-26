@@ -142,4 +142,109 @@ export const CartSidebar: React.FC<CartSidebarProps> = ({
           </button>
           
           {showCustomerInput && (
-            <div className="grid grid-cols-2 gap-2 mt-2 p-2 bg-blue-50 rounded-lg animate-in fade-in slide-in
+            <div className="grid grid-cols-2 gap-2 mt-2 p-2 bg-blue-50 rounded-lg animate-in fade-in slide-in-from-top-2">
+              <input 
+                placeholder="客戶姓名"
+                className="px-3 py-2 rounded border border-blue-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                value={customer.name}
+                onChange={e => setCustomer({...customer, name: e.target.value})}
+              />
+              <input 
+                placeholder="聯絡電話"
+                className="px-3 py-2 rounded border border-blue-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                value={customer.phone}
+                onChange={e => setCustomer({...customer, phone: e.target.value})}
+              />
+            </div>
+          )}
+        </div>
+
+        {/* Total & Method */}
+        <div className="flex justify-between items-center p-2">
+           <div className="flex items-center bg-gray-100 rounded-lg p-1">
+              <button 
+                onClick={() => setPaymentMethod('CASH')}
+                className={`flex items-center gap-1 px-3 py-2 rounded-md font-bold text-sm transition-all ${paymentMethod === 'CASH' ? 'bg-white shadow text-green-700' : 'text-gray-500'}`}
+              >
+                <Banknote size={16}/> 現金
+              </button>
+              <button 
+                onClick={() => setPaymentMethod('LINE_PAY')}
+                className={`flex items-center gap-1 px-3 py-2 rounded-md font-bold text-sm transition-all ${paymentMethod === 'LINE_PAY' ? 'bg-green-500 shadow text-white' : 'text-gray-500'}`}
+              >
+                <CreditCard size={16}/> Line Pay
+              </button>
+           </div>
+           <div className="text-right">
+              <span className="text-gray-500 text-xs block font-bold">結帳總額</span>
+              <span className="text-2xl font-black text-blue-600">NT${total}</span>
+           </div>
+        </div>
+
+        {/* --- 新增：報廢登記按鈕 (放在結帳區塊上方) --- */}
+        <div className="px-2 pb-2">
+           <button 
+             onClick={() => {
+               if(window.confirm('確定要將購物車內容登記為「損耗/報廢」嗎？\n(營收將記為 $0，但會扣除庫存)')) {
+                 onCheckout(0, 'WASTE', customer);
+               }
+             }}
+             disabled={cart.length === 0}
+             className="w-full flex items-center justify-center gap-2 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-500 hover:text-red-500 font-bold text-sm border border-gray-200 transition-colors disabled:opacity-50"
+           >
+             <AlertTriangle size={16} />
+             登記為損耗/報廢 (不計營收)
+           </button>
+        </div>
+        {/* ------------------------------------------- */}
+
+        {/* CASH MODE */}
+        {paymentMethod === 'CASH' && (
+          <div className="bg-gray-100 p-2 border-t border-gray-200">
+              <div className="bg-white border-2 border-blue-200 rounded-lg px-3 py-2 mb-2 flex justify-between items-center shadow-inner">
+                 <span className="text-gray-500 text-sm font-bold">實收:</span>
+                 <div className="text-right">
+                    <span className="text-2xl font-black text-gray-800 tracking-wider">NT${cashReceived}</span>
+                    {cashReceived > 0 && (
+                      <span className={`block text-sm font-bold ${change < 0 ? 'text-red-500' : 'text-green-600'}`}>
+                         {change < 0 ? `不足 ${Math.abs(change)}` : `找零 NT$${change}`}
+                      </span>
+                    )}
+                 </div>
+              </div>
+
+              <div className="flex gap-2 h-44">
+                 <div className="flex flex-col gap-1.5 w-1/4">
+                    <button onClick={() => handleQuickCash(100)} className="flex-1 bg-white border border-gray-300 rounded-lg font-black text-blue-700 hover:bg-blue-50 active:scale-95 transition-all text-xs">+$100</button>
+                    <button onClick={() => handleQuickCash(500)} className="flex-1 bg-white border border-gray-300 rounded-lg font-black text-blue-700 hover:bg-blue-50 active:scale-95 transition-all text-xs">+$500</button>
+                    <button onClick={() => handleQuickCash(1000)} className="flex-1 bg-white border border-gray-300 rounded-lg font-black text-blue-700 hover:bg-blue-50 active:scale-95 transition-all text-xs">+$1000</button>
+                 </div>
+                 <div className="grid grid-cols-3 gap-1.5 w-3/4">
+                    {[1, 2, 3, 4, 5, 6, 7, 8, 9].map(num => (
+                      <button key={num} onClick={() => handleNumInput(num)} className="bg-white rounded-lg shadow-sm font-black text-lg text-gray-800 active:bg-gray-200 transition-all">{num}</button>
+                    ))}
+                    <button onClick={() => setCashReceived(0)} className="bg-red-100 text-red-600 rounded-lg font-bold active:scale-95 text-xs">重設</button>
+                    <button onClick={() => handleNumInput(0)} className="bg-white rounded-lg shadow-sm font-black text-lg text-gray-800 active:bg-gray-200 transition-all">0</button>
+                    <button onClick={handleBackspace} className="bg-gray-200 text-gray-600 rounded-lg flex items-center justify-center active:scale-95"><Delete size={18} /></button>
+                 </div>
+              </div>
+          </div>
+        )}
+
+        <div className="p-2 bg-white border-t border-gray-200">
+          <button 
+            disabled={!isEnough || cart.length === 0}
+            onClick={() => onCheckout(paymentMethod === 'CASH' ? cashReceived : total, paymentMethod, customer)}
+            className={`w-full py-3 rounded-xl text-xl font-black text-white shadow-lg transition-all flex justify-center items-center gap-2
+              ${!isEnough || cart.length === 0 
+                ? 'bg-gray-400 cursor-not-allowed' 
+                : 'bg-red-600 hover:bg-red-700 active:scale-95'}`}
+          >
+            <DollarSign size={24} />
+            確認結帳 {paymentMethod === 'CASH' && cashReceived > 0 && change >= 0 ? `(找 ${change})` : ''}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
