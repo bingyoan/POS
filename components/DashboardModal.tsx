@@ -15,6 +15,80 @@ interface DashboardModalProps {
   onClearAllOrders: () => void;
 }
 
+// --- 新增：台斤/兩 專用輸入元件 ---
+const CattyInput: React.FC<{
+  value: number;
+  onChange: (val: number) => void;
+  isFixedUnit: boolean;
+  placeholder?: string;
+  colorClass?: string;
+}> = ({ value, onChange, isFixedUnit, placeholder, colorClass }) => {
+  // 如果是固定單位 (盒/份)，直接顯示單一輸入框
+  if (isFixedUnit) {
+    return (
+      <div className="flex items-center justify-center">
+        <input 
+          type="number" 
+          className={`w-16 bg-gray-800 border border-gray-600 rounded p-1 text-center focus:outline-none font-mono ${colorClass}`}
+          value={value || ''}
+          placeholder={placeholder || "0"}
+          onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
+          onFocus={(e) => e.target.select()}
+        />
+        <span className="ml-1 text-gray-500 text-xs">份</span>
+      </div>
+    );
+  }
+
+  // 如果是秤重單位 (台斤)，拆成 [斤] [兩] 兩個輸入框
+  // 換算邏輯：整數部分是斤，小數部分 * 16 是兩
+  const catty = Math.floor(value || 0);
+  // 處理浮點數誤差，例如 0.5 * 16 可能變成 7.99999
+  const tael = Math.round(((value || 0) - catty) * 16); 
+
+  const handleCattyChange = (newCattyStr: string) => {
+    const newCatty = parseFloat(newCattyStr) || 0;
+    // 保持目前的兩不變，重新組合
+    const total = newCatty + (tael / 16);
+    onChange(total);
+  };
+
+  const handleTaelChange = (newTaelStr: string) => {
+    const newTael = parseFloat(newTaelStr) || 0;
+    // 保持目前的斤不變，重新組合
+    const total = catty + (newTael / 16);
+    onChange(total);
+  };
+
+  return (
+    <div className="flex items-center justify-center gap-1">
+      <div className="relative">
+        <input 
+          type="number" 
+          className={`w-12 bg-gray-800 border border-gray-600 rounded p-1 text-center focus:outline-none font-mono ${colorClass}`}
+          value={catty || ''}
+          placeholder="0"
+          onChange={(e) => handleCattyChange(e.target.value)}
+          onFocus={(e) => e.target.select()}
+        />
+        <span className="absolute -top-3 left-0 w-full text-center text-[9px] text-gray-500">斤</span>
+      </div>
+      <span className="text-gray-500">:</span>
+      <div className="relative">
+        <input 
+          type="number" 
+          className={`w-12 bg-gray-800 border border-gray-600 rounded p-1 text-center focus:outline-none font-mono ${colorClass}`}
+          value={tael || ''}
+          placeholder="0"
+          onChange={(e) => handleTaelChange(e.target.value)}
+          onFocus={(e) => e.target.select()}
+        />
+        <span className="absolute -top-3 left-0 w-full text-center text-[9px] text-gray-500">兩</span>
+      </div>
+    </div>
+  );
+};
+
 export const DashboardModal: React.FC<DashboardModalProps> = ({ 
   isOpen, 
   onClose, 
@@ -94,7 +168,7 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
       
       const salesQty = Math.max(0, record.opening - record.closing - record.waste);
       
-      // ✅ 關鍵修改：強制小魚乾 (sd_driedfish) 不視為固定單位，改用秤重邏輯
+      // 強制小魚乾 (sd_driedfish) 改用秤重模式
       const isFixedUnit = (
         product.fixedPrices && 
         product.fixedPrices.length > 0 && 
@@ -123,12 +197,10 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
 
       const diff = actualRevenue - Math.round(estRevenue);
 
-      // 系統銷量計算
       const systemSoldGrams = ordersToUse.reduce((sum, order) => {
          const items = order.items.filter(item => item.productId === product.id);
          return sum + items.reduce((iSum, i) => {
             if (i.weightGrams) return iSum + i.weightGrams;
-            // 自動換算：如果是小魚乾按了按鈕，用金額反推重量
             if (i.price && product.defaultSellingPricePer600g > 0) {
               return iSum + (i.price / product.defaultSellingPricePer600g) * 600;
             }
@@ -166,13 +238,12 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
 
   // --- Handlers ---
 
-  const handleInventoryChange = (productId: string, field: keyof InventoryRecord, value: string) => {
-    const numVal = parseFloat(value) || 0;
+  const handleInventoryChange = (productId: string, field: keyof InventoryRecord, value: number) => {
     setInventoryData(prev => ({
       ...prev,
       [productId]: {
         ...(prev[productId] || { opening: 0, closing: 0, waste: 0 }),
-        [field]: numVal
+        [field]: value
       }
     }));
   };
@@ -531,7 +602,7 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
                      <p className="font-bold">盤點說明</p>
                      <p className="opacity-70">
                        請輸入
-                       <span className="text-yellow-400 font-bold mx-1">台斤</span>
+                       <span className="text-yellow-400 font-bold mx-1">台斤 / 兩</span>
                        (固定單位輸入個數)。系統將自動換算。
                      </p>
                   </div>
@@ -566,34 +637,31 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
                                  <div className="text-[10px] text-gray-500 font-normal">{row.isFixedUnit ? '(單位: 份)' : '(單位: 台斤)'}</div>
                               </td>
                               <td className="p-2 text-center">
-                                 <input 
-                                    type="number" 
-                                    className="w-20 bg-gray-800 border border-gray-600 rounded p-1 text-center focus:border-yellow-500 focus:outline-none text-white font-mono"
-                                    value={row.record.opening || ''}
-                                    placeholder="0"
-                                    onChange={(e) => handleInventoryChange(row.product.id, 'opening', e.target.value)}
+                                 <CattyInput 
+                                    value={row.record.opening || 0}
+                                    onChange={(val) => handleInventoryChange(row.product.id, 'opening', val)}
+                                    isFixedUnit={!!row.isFixedUnit}
+                                    colorClass="focus:border-yellow-500 text-white"
                                  />
                               </td>
                               <td className="p-2 text-center">
-                                 <input 
-                                    type="number" 
-                                    className="w-20 bg-gray-800 border border-gray-600 rounded p-1 text-center focus:border-yellow-500 focus:outline-none text-white font-mono"
-                                    value={row.record.closing || ''}
-                                    placeholder="0"
-                                    onChange={(e) => handleInventoryChange(row.product.id, 'closing', e.target.value)}
+                                 <CattyInput 
+                                    value={row.record.closing || 0}
+                                    onChange={(val) => handleInventoryChange(row.product.id, 'closing', val)}
+                                    isFixedUnit={!!row.isFixedUnit}
+                                    colorClass="focus:border-yellow-500 text-white"
                                  />
                               </td>
                               <td className="p-2 text-center">
-                                 <input 
-                                    type="number" 
-                                    className="w-20 bg-gray-800 border border-gray-600 rounded p-1 text-center focus:border-red-500 focus:outline-none text-white font-mono"
-                                    value={row.record.waste || ''}
-                                    placeholder="0"
-                                    onChange={(e) => handleInventoryChange(row.product.id, 'waste', e.target.value)}
+                                 <CattyInput 
+                                    value={row.record.waste || 0}
+                                    onChange={(val) => handleInventoryChange(row.product.id, 'waste', val)}
+                                    isFixedUnit={!!row.isFixedUnit}
+                                    colorClass="focus:border-red-500 text-white"
                                  />
                               </td>
                               <td className="p-4 text-right font-mono font-bold text-blue-300 bg-gray-800/20">
-                                 {row.salesQty} {row.isFixedUnit ? '' : '斤'}
+                                 {row.salesQty.toFixed(2)} {row.isFixedUnit ? '' : '斤'}
                               </td>
                               <td className="p-4 text-right font-mono text-gray-500 text-xs">
                                  {row.systemSoldUnit} {row.isFixedUnit ? '' : '斤'}
