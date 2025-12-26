@@ -11,14 +11,14 @@ export const PRODUCTS: Product[] = [
     defaultSellingPricePer600g: 650,
     fixedPrices: [
       { label: '標準盒', price: 130 },
-      { label: '特惠包', price: 180 }
+      { label: '紙袋包', price: 180 }
     ]
   },
   { id: 'sd_jellyfish', name: '海蜇皮', category: Category.SMALL_DISH, costPer600g: 130, defaultSellingPricePer600g: 300 },
   { id: 'sd_pigscalp', name: '豬頭皮', category: Category.SMALL_DISH, costPer600g: 100, defaultSellingPricePer600g: 300 },
-  { id: 'sd_pigliver', name: '麻油豬肝', category: Category.SMALL_DISH, costPer600g: 80, defaultSellingPricePer600g: 300 },
+  { id: 'sd_pigliver', name: '麻油豬肝', category: Category.SMALL_DISH, costPer600g: 95, defaultSellingPricePer600g: 300 },
   { id: 'sd_peanuts', name: '蒜拌花生', category: Category.SMALL_DISH, costPer600g: 100, defaultSellingPricePer600g: 300 },
-  { id: 'sd_chickenfeet', name: '豆瓣滷鳳爪', category: Category.SMALL_DISH, costPer600g: 90, defaultSellingPricePer600g: 300 },
+  { id: 'sd_chickenfeet', name: '豆瓣滷鳳爪', category: Category.SMALL_DISH, costPer600g: 100, defaultSellingPricePer600g: 300 },
   { id: 'sd_fishskin', name: '醋溜魚皮', category: Category.SMALL_DISH, costPer600g: 90, defaultSellingPricePer600g: 300 },
 
   // Smoked Shark (鯊魚煙)
