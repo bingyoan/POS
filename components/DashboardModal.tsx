@@ -7,7 +7,7 @@ import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recha
 interface DashboardModalProps {
   isOpen: boolean;
   onClose: () => void;
-  orders: Order[];
+  orders: Order[]; // 從 App 傳來的本地訂單
   soldOutIds: string[];
   products: Product[];
   onUpdateRemark: (orderId: string, remark: string) => void;
@@ -48,7 +48,7 @@ const CattyInput: React.FC<{
 
   const handleCattyChange = (newCattyStr: string) => {
     const newCatty = parseFloat(newCattyStr) || 0;
-    // 保持目前的兩不變，重新組合
+    // 保持目前的兩不變，重新組合 (兩 / 16 = 小數點斤)
     const total = newCatty + (tael / 16);
     onChange(total);
   };
@@ -168,7 +168,8 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
       
       const salesQty = Math.max(0, record.opening - record.closing - record.waste);
       
-      // 強制小魚乾 (sd_driedfish) 改用秤重模式
+      // ✅ 關鍵邏輯：強制小魚乾 (sd_driedfish) 改用秤重模式 (False)
+      // 這樣盤點時就會出現「台斤」輸入框，而不是「盒」
       const isFixedUnit = (
         product.fixedPrices && 
         product.fixedPrices.length > 0 && 
@@ -197,10 +198,13 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
 
       const diff = actualRevenue - Math.round(estRevenue);
 
+      // ✅ 系統銷量自動換算：
+      // 如果賣的是小魚乾盒裝 (沒有重量紀錄)，用售價反推重量 (Price / 單價 * 600g)
       const systemSoldGrams = ordersToUse.reduce((sum, order) => {
          const items = order.items.filter(item => item.productId === product.id);
          return sum + items.reduce((iSum, i) => {
             if (i.weightGrams) return iSum + i.weightGrams;
+            
             if (i.price && product.defaultSellingPricePer600g > 0) {
               return iSum + (i.price / product.defaultSellingPricePer600g) * 600;
             }
