@@ -98,8 +98,7 @@ const App: React.FC = () => {
     setIsComboModalOpen(true);
   };
 
-  // ✅ 修改重點：接收已經拆解好的 CartItem 陣列
-  // 這樣庫存扣除才會正確對應到單品
+  // 接收已經拆解好的 CartItem 陣列
   const handleConfirmCombo = (cartItems: CartItem[]) => {
     if (cartItems.length > 0) {
       setCart(prev => [...prev, ...cartItems]);
@@ -127,7 +126,13 @@ const App: React.FC = () => {
   };
 
   const handleCheckout = (received: number, method: PaymentMethod, customer?: Customer) => {
-    const totalRevenue = cart.reduce((sum, item) => sum + item.price, 0);
+    // ✅ 修改重點：處理報廢邏輯 (WASTE)
+    const isWaste = method === 'WASTE';
+
+    // 如果是報廢，營收 (Revenue) 記為 0；否則正常計算
+    const totalRevenue = isWaste ? 0 : cart.reduce((sum, item) => sum + item.price, 0);
+    
+    // 成本照常計算 (這樣 profit 就會變成負數，代表虧損)
     const totalCost = cart.reduce((sum, item) => sum + item.cost, 0);
 
     const newOrder: Order = {
@@ -153,7 +158,7 @@ const App: React.FC = () => {
     setOrders(prev => prev.filter(o => o.id !== orderId));
   };
 
-  // ✅ 新增：日結時清空訂單的功能
+  // 日結時清空訂單的功能
   const handleClearAllOrders = () => {
     setOrders([]);
     localStorage.removeItem('pos_orders_today');
@@ -271,14 +276,14 @@ const App: React.FC = () => {
         products={PRODUCTS}
         onUpdateRemark={handleUpdateOrderRemark}
         onDeleteOrder={handleDeleteOrder}
-        onClearAllOrders={handleClearAllOrders} // ✅ 傳入清空功能
+        onClearAllOrders={handleClearAllOrders}
       />
 
       <ComboModal 
         products={PRODUCTS} 
         isOpen={isComboModalOpen} 
         onClose={() => setIsComboModalOpen(false)} 
-        onConfirm={handleConfirmCombo} // ✅ 這裡現在對應正確的型別
+        onConfirm={handleConfirmCombo} 
       />
     </div>
   );
