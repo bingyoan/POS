@@ -7,7 +7,7 @@ import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recha
 interface DashboardModalProps {
   isOpen: boolean;
   onClose: () => void;
-  orders: Order[];
+  orders: Order[]; // 從 App 傳來的本地訂單
   soldOutIds: string[];
   products: Product[];
   onUpdateRemark: (orderId: string, remark: string) => void;
@@ -18,7 +18,7 @@ interface DashboardModalProps {
 export const DashboardModal: React.FC<DashboardModalProps> = ({ 
   isOpen, 
   onClose, 
-  orders, 
+  orders: localOrders, // 重新命名為 localOrders
   soldOutIds, 
   products, 
   onUpdateRemark, 
@@ -26,8 +26,14 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
   onClearAllOrders
 }) => {
   const [activeTab, setActiveTab] = useState<'overview' | 'reports' | 'inventory'>('overview');
-  // 追蹤當前正在查看詳情的訂單
   const [viewingOrder, setViewingOrder] = useState<Order | null>(null);
+
+  // --- 新增：雲端資料同步 ---
+  const [remoteOrders, setRemoteOrders] = useState<Order[] | null>(null);
+  const [loadingRemote, setLoadingRemote] = useState(false);
+
+  // 核心邏輯：如果有抓到雲端資料就用雲端的，否則用本地的
+  const ordersToUse = remoteOrders || localOrders;
 
   // Inventory State
   const [inventoryData, setInventoryData] = useState<Record<string, InventoryRecord>>({});
@@ -43,9 +49,45 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [isClosingDay, setIsClosingDay] = useState(false);
 
+  // --- Functions ---
+
+  const handleFetchRealtimeOrders = async () => {
+    setLoadingRemote(true);
+    const todayStr = new Date().toISOString().split('T')[0];
+    try {
+      const { data, error } = await supabase
+        .from('orders')
+        .select('*')
+        .eq('date', todayStr)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+
+      // 轉換資料格式
+      const formattedOrders: Order[] = (data || []).map(row => ({
+        id: row.id,
+        timestamp: new Date(row.created_at).getTime(),
+        items: row.content, // JSONB
+        totalPrice: row.total_price,
+        totalCost: row.total_cost,
+        totalProfit: row.total_profit,
+        paymentMethod: row.payment_method,
+        customer: row.customer,
+        remarks: row.remarks
+      }));
+
+      setRemoteOrders(formattedOrders);
+      alert(`已同步雲端數據！\n目前共有 ${formattedOrders.length} 筆交易。`);
+    } catch (err: any) {
+      console.error(err);
+      alert('同步失敗: ' + err.message);
+    } finally {
+      setLoadingRemote(false);
+    }
+  };
+
   // --- Calculations ---
 
-  // Inventory Rows Logic
   const inventoryRows = useMemo(() => {
     if (!isOpen) return [];
 
@@ -67,7 +109,8 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
         estRevenue = salesQty * refPrice;
       }
 
-      const actualRevenue = orders.reduce((sum, order) => {
+      // 使用 ordersToUse 計算
+      const actualRevenue = ordersToUse.reduce((sum, order) => {
         if (order.paymentMethod === 'WASTE') return sum;
 
         const productTotal = order.items
@@ -78,13 +121,13 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
 
       const diff = actualRevenue - Math.round(estRevenue);
 
-      const systemSoldGrams = orders.reduce((sum, order) => {
+      const systemSoldGrams = ordersToUse.reduce((sum, order) => {
          const items = order.items.filter(item => item.productId === product.id);
          return sum + items.reduce((iSum, i) => iSum + (i.weightGrams || 0), 0);
       }, 0);
       
       const systemSoldUnit = isFixedUnit 
-        ? orders.reduce((sum, order) => sum + order.items.filter(i => i.productId === product.id).reduce((q, i) => q + i.quantity, 0), 0)
+        ? ordersToUse.reduce((sum, order) => sum + order.items.filter(i => i.productId === product.id).reduce((q, i) => q + i.quantity, 0), 0)
         : Number((systemSoldGrams / 600).toFixed(2));
 
       return {
@@ -99,17 +142,17 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
         diff
       };
     });
-  }, [products, inventoryData, orders, isOpen]);
+  }, [products, inventoryData, ordersToUse, isOpen]);
 
   const totalInventoryDiff = useMemo(() => {
       return inventoryRows.reduce((sum, row) => sum + row.diff, 0);
   }, [inventoryRows]);
 
   const totalWasteCost = useMemo(() => {
-    return orders
+    return ordersToUse
       .filter(o => o.paymentMethod === 'WASTE')
       .reduce((sum, o) => sum + o.totalCost, 0);
-  }, [orders]);
+  }, [ordersToUse]);
 
   // --- Handlers ---
 
@@ -154,10 +197,10 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
     
     setIsClosingDay(true);
     
-    const totalSalesCash = orders.filter(o => o.paymentMethod === 'CASH').reduce((sum, o) => sum + o.totalPrice, 0);
-    const totalSalesLine = orders.filter(o => o.paymentMethod === 'LINE_PAY').reduce((sum, o) => sum + o.totalPrice, 0);
+    const totalSalesCash = ordersToUse.filter(o => o.paymentMethod === 'CASH').reduce((sum, o) => sum + o.totalPrice, 0);
+    const totalSalesLine = ordersToUse.filter(o => o.paymentMethod === 'LINE_PAY').reduce((sum, o) => sum + o.totalPrice, 0);
     const totalRevenue = totalSalesCash + totalSalesLine;
-    const totalCost = orders.reduce((sum, o) => sum + o.totalCost, 0);
+    const totalCost = ordersToUse.reduce((sum, o) => sum + o.totalCost, 0);
     const totalProfit = totalRevenue - totalCost;
     const todayStr = new Date().toISOString().split('T')[0];
 
@@ -166,7 +209,7 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
       total_revenue: totalRevenue,
       total_profit: totalProfit,
       total_cost: totalCost,
-      order_count: orders.length,
+      order_count: ordersToUse.length,
       inventory_variance: totalInventoryDiff !== 0 ? totalInventoryDiff : -totalWasteCost, 
       note: `日結 - 現金:${totalSalesCash}, LINE:${totalSalesLine}, 系統損耗:${totalWasteCost}`
     };
@@ -191,6 +234,10 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
   };
 
   const handleDeleteClick = (orderId: string) => {
+    if (remoteOrders) {
+      alert("檢視雲端資料時無法在此刪除，請回到現場平板操作，或使用 Supabase 後台。");
+      return;
+    }
     if (window.confirm('確定要刪除這筆交易紀錄嗎？\n刪除後營收金額將會扣除，且無法復原。')) {
       onDeleteOrder(orderId);
     }
@@ -203,10 +250,10 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
 
   if (!isOpen) return null;
 
-  const totalSalesCash = orders.filter(o => o.paymentMethod === 'CASH').reduce((sum, o) => sum + o.totalPrice, 0);
-  const totalSalesLine = orders.filter(o => o.paymentMethod === 'LINE_PAY').reduce((sum, o) => sum + o.totalPrice, 0);
+  const totalSalesCash = ordersToUse.filter(o => o.paymentMethod === 'CASH').reduce((sum, o) => sum + o.totalPrice, 0);
+  const totalSalesLine = ordersToUse.filter(o => o.paymentMethod === 'LINE_PAY').reduce((sum, o) => sum + o.totalPrice, 0);
   const totalRevenue = totalSalesCash + totalSalesLine;
-  const totalProfit = orders.reduce((sum, o) => sum + o.totalProfit, 0);
+  const totalProfit = ordersToUse.reduce((sum, o) => sum + o.totalProfit, 0);
 
   const paymentData = [
     { name: '現金', value: totalSalesCash, color: '#10b981' },
@@ -261,7 +308,23 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
             <div className="h-full overflow-y-auto p-6 grid grid-cols-1 lg:grid-cols-2 gap-6 no-scrollbar">
               <div className="space-y-6">
                 <div className="bg-gray-800/50 rounded-2xl p-6 border border-gray-700 space-y-6">
-                  <h3 className="text-gray-400 font-bold uppercase text-xs tracking-widest">本日即時營收</h3>
+                  
+                  {/* ✅ 按鈕加在這裡！ */}
+                  <h3 className="text-gray-400 font-bold uppercase text-xs tracking-widest flex justify-between items-center">
+                    本日即時營收
+                    <button 
+                      onClick={handleFetchRealtimeOrders}
+                      disabled={loadingRemote}
+                      className={`px-3 py-1.5 rounded-lg flex items-center gap-2 text-xs font-bold transition-all
+                        ${remoteOrders ? 'bg-green-600 text-white' : 'bg-blue-600 hover:bg-blue-500 text-white'}
+                        disabled:opacity-50
+                      `}
+                    >
+                      {loadingRemote ? <RefreshCw className="animate-spin" size={12}/> : <Cloud size={12}/>}
+                      {remoteOrders ? '已顯示雲端數據' : '同步雲端'}
+                    </button>
+                  </h3>
+
                   <div>
                     <span className="text-5xl font-black text-blue-400">${totalRevenue.toLocaleString()}</span>
                     <p className="text-gray-500 text-xs mt-1 font-bold">總營業額 (TWD)</p>
@@ -314,11 +377,11 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
               <div className="space-y-6">
                 <div className="bg-gray-800/50 rounded-2xl p-6 border border-gray-700 flex-1 h-[600px] flex flex-col">
                   <h3 className="text-gray-400 font-bold mb-4 uppercase text-xs tracking-widest flex items-center gap-2">
-                    <List size={14} className="text-green-500" /> 本日訂單紀錄 ({orders.length})
+                    <List size={14} className="text-green-500" /> 本日訂單紀錄 ({ordersToUse.length})
                   </h3>
                   <div className="overflow-y-auto no-scrollbar space-y-2 flex-1">
-                    {orders.length === 0 ? <p className="text-gray-500 italic">尚無訂單</p> : 
-                      orders.map(order => (
+                    {ordersToUse.length === 0 ? <p className="text-gray-500 italic">尚無訂單</p> : 
+                      ordersToUse.map(order => (
                           <div key={order.id} className="bg-gray-900/50 p-3 rounded-xl border border-gray-700 flex justify-between items-center group hover:bg-gray-800 transition-colors">
                             <div className="flex-1">
                                <div className="flex gap-2 items-center mb-1">
@@ -330,7 +393,6 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
                                       {order.paymentMethod === 'LINE_PAY' ? 'LINE' : '現金'}
                                     </span>
                                  )}
-                                 {/* 顯示有客資的標記 */}
                                  {order.customer && (order.customer.name || order.customer.phone) && (
                                    <span className="text-[10px] bg-indigo-900 text-indigo-300 px-1.5 py-0.5 rounded flex items-center gap-1">
                                      <User size={10} /> {order.customer.name || '客戶'}
@@ -343,19 +405,21 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
                                </div>
                             </div>
                             <div className="flex gap-2">
-                               {/* 檢視按鈕 */}
                                <button 
                                  onClick={() => setViewingOrder(order)} 
                                  className="text-gray-400 hover:text-white p-2 bg-gray-800 rounded-lg border border-gray-700 hover:bg-gray-700"
                                >
                                  <Eye size={18} />
                                </button>
-                               <button 
-                                 onClick={() => handleDeleteClick(order.id)} 
-                                 className="text-red-900 hover:text-red-500 p-2 opacity-50 hover:opacity-100 transition-opacity"
-                               >
-                                 <Trash2 size={18} />
-                               </button>
+                               {/* 只在本地模式顯示刪除按鈕 */}
+                               {!remoteOrders && (
+                                 <button 
+                                   onClick={() => handleDeleteClick(order.id)} 
+                                   className="text-red-900 hover:text-red-500 p-2 opacity-50 hover:opacity-100 transition-opacity"
+                                 >
+                                   <Trash2 size={18} />
+                                 </button>
+                               )}
                             </div>
                           </div>
                       ))
@@ -366,7 +430,7 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
             </div>
           )}
 
-          {/* TAB 2: REPORTS */}
+          {/* TAB 2: REPORTS (Supabase History) */}
           {activeTab === 'reports' && (
              <div className="h-full flex flex-col p-6">
                 <div className="bg-gray-800 rounded-xl p-4 mb-6 flex flex-wrap items-center gap-4 border border-gray-700">
@@ -568,11 +632,10 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
         </div>
       </div>
 
-      {/* --- 新增：訂單詳情彈窗 Overlay --- */}
+      {/* --- 訂單詳情彈窗 Overlay --- */}
       {viewingOrder && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden text-gray-900">
-             {/* Modal Header */}
              <div className="bg-gray-800 text-white p-4 flex justify-between items-center">
                 <div>
                    <h3 className="font-bold text-lg flex items-center gap-2">
@@ -589,9 +652,7 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
                 </button>
              </div>
 
-             {/* Modal Body */}
              <div className="p-0 max-h-[70vh] overflow-y-auto bg-gray-50">
-                {/* 1. 客戶資料區塊 */}
                 {viewingOrder.customer && (viewingOrder.customer.name || viewingOrder.customer.phone) && (
                   <div className="p-4 bg-indigo-50 border-b border-indigo-100">
                      <h4 className="text-xs font-bold text-indigo-800 uppercase mb-2 flex items-center gap-1">
@@ -616,7 +677,6 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
                   </div>
                 )}
 
-                {/* 2. 商品列表 */}
                 <div className="p-4">
                    <h4 className="text-xs font-bold text-gray-400 uppercase mb-2">購買項目</h4>
                    <div className="space-y-2">
@@ -643,7 +703,6 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
                    </div>
                 </div>
 
-                {/* 3. 備註區塊 (唯讀) */}
                 {viewingOrder.remarks && (
                    <div className="px-4 pb-4">
                       <h4 className="text-xs font-bold text-gray-400 uppercase mb-1">備註</h4>
@@ -654,7 +713,6 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
                 )}
              </div>
 
-             {/* Modal Footer */}
              <div className="p-4 bg-white border-t border-gray-200">
                 <div className="flex justify-between items-center mb-1">
                    <span className="text-sm font-bold text-gray-500">支付方式</span>
