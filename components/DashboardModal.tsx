@@ -275,9 +275,9 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
     }
   }, [isOpen, activeTab]);
 
-  // ✅ 核心修正：日結時刪除雲端原始資料
+  // ✅ 核心修正：日結時，自動將「今日期末」轉為「明日期初」
   const handleCloseDay = async () => {
-    if (!window.confirm('確定要執行本日結帳嗎？\n\n1. 營收數據將存入雲端報表。\n2. 本日訂單將從雲端「永久移除」。\n3. 請確認盤點資料已輸入完成(若有)。')) return;
+    if (!window.confirm('確定要執行本日結帳嗎？\n\n1. 營收數據將存入雲端報表。\n2. 本日訂單將從雲端「永久移除」。\n3. 系統會自動將「今日期末庫存」帶入「明日期初」。')) return;
     
     setIsClosingDay(true);
     
@@ -299,15 +299,14 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
     };
 
     try {
-      // 1. 存入歷史報表 (彙總數據)
+      // 1. 存入歷史報表
       const { error: upsertError } = await supabase
         .from('daily_closings')
         .upsert(record, { onConflict: 'date' });
 
       if (upsertError) throw upsertError;
 
-      // 2. ✅ 新增：從雲端刪除本日所有詳細訂單
-      // 這樣平板重新整理後，雲端回傳的列表就會是空的
+      // 2. 從雲端刪除本日訂單
       const { error: deleteError } = await supabase
         .from('orders')
         .delete()
@@ -315,11 +314,26 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
 
       if (deleteError) throw deleteError;
 
-      // 3. 清除本地暫存
-      localStorage.removeItem('pos_inventory_temp');
-      setInventoryData({});
+      // 3. ✅ 自動結轉邏輯 (The Magic)
+      // 建立明天的庫存表：把今天的 closing (期末) 複製到明天的 opening (期初)
+      const nextDayInventory: Record<string, InventoryRecord> = {};
+      
+      Object.keys(inventoryData).forEach(productId => {
+        const currentRecord = inventoryData[productId];
+        // 只有當期末有數字時才帶入，避免帶入 0
+        if (currentRecord && currentRecord.closing > 0) {
+          nextDayInventory[productId] = {
+            opening: currentRecord.closing, // 昨晚剩的 = 明早有的
+            closing: 0, // 明天的期末先歸零
+            waste: 0    // 明天的損耗先歸零
+          };
+        }
+      });
 
-      alert(`✅ ${todayStr} 結帳成功！\n資料已同步，平板端訂單已清空。`);
+      // 更新狀態 (這會透過我們剛寫的 useEffect 自動存入 localStorage)
+      setInventoryData(nextDayInventory);
+
+      alert(`✅ ${todayStr} 結帳成功！\n\n系統已自動將「期末庫存」帶入為「明日期初」。\n您明天可以直接開賣！`);
       onClearAllOrders();
       onClose();
 
