@@ -7,7 +7,7 @@ import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recha
 interface DashboardModalProps {
   isOpen: boolean;
   onClose: () => void;
-  orders: Order[]; // 從 App 傳來的本地訂單
+  orders: Order[];
   soldOutIds: string[];
   products: Product[];
   onUpdateRemark: (orderId: string, remark: string) => void;
@@ -15,7 +15,7 @@ interface DashboardModalProps {
   onClearAllOrders: () => void;
 }
 
-// --- 新增：台斤/兩 專用輸入元件 ---
+// --- 台斤/兩 專用輸入元件 ---
 const CattyInput: React.FC<{
   value: number;
   onChange: (val: number) => void;
@@ -23,7 +23,6 @@ const CattyInput: React.FC<{
   placeholder?: string;
   colorClass?: string;
 }> = ({ value, onChange, isFixedUnit, placeholder, colorClass }) => {
-  // 如果是固定單位 (盒/份)，直接顯示單一輸入框
   if (isFixedUnit) {
     return (
       <div className="flex items-center justify-center">
@@ -40,22 +39,17 @@ const CattyInput: React.FC<{
     );
   }
 
-  // 如果是秤重單位 (台斤)，拆成 [斤] [兩] 兩個輸入框
-  // 換算邏輯：整數部分是斤，小數部分 * 16 是兩
   const catty = Math.floor(value || 0);
-  // 處理浮點數誤差，例如 0.5 * 16 可能變成 7.99999
   const tael = Math.round(((value || 0) - catty) * 16); 
 
   const handleCattyChange = (newCattyStr: string) => {
     const newCatty = parseFloat(newCattyStr) || 0;
-    // 保持目前的兩不變，重新組合 (兩 / 16 = 小數點斤)
     const total = newCatty + (tael / 16);
     onChange(total);
   };
 
   const handleTaelChange = (newTaelStr: string) => {
     const newTael = parseFloat(newTaelStr) || 0;
-    // 保持目前的斤不變，重新組合
     const total = catty + (newTael / 16);
     onChange(total);
   };
@@ -108,8 +102,17 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
 
   const ordersToUse = remoteOrders || localOrders;
 
-  // Inventory State
-  const [inventoryData, setInventoryData] = useState<Record<string, InventoryRecord>>({});
+  // --- Inventory State (加入自動存檔功能) ---
+  // 1. 初始化時嘗試從 localStorage 讀取
+  const [inventoryData, setInventoryData] = useState<Record<string, InventoryRecord>>(() => {
+    const saved = localStorage.getItem('pos_inventory_temp');
+    return saved ? JSON.parse(saved) : {};
+  });
+
+  // 2. 當 inventoryData 改變時，自動存入 localStorage
+  useEffect(() => {
+    localStorage.setItem('pos_inventory_temp', JSON.stringify(inventoryData));
+  }, [inventoryData]);
 
   // History Report State
   const [startDate, setStartDate] = useState(() => {
@@ -168,12 +171,10 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
       
       const salesQty = Math.max(0, record.opening - record.closing - record.waste);
       
-      // ✅ 修正邏輯：排除所有「賣盒裝但要秤重盤點」的商品
-      // 這裡加入了 sd_driedfish_orig, sd_driedfish_spicy, sd_pomelo_radish
+      // 判斷是否為固定單位 (排除需要秤重盤點的盒裝商品)
       const isFixedUnit = (
         product.fixedPrices && 
         product.fixedPrices.length > 0 && 
-        // 排除以下 ID，讓它們強制顯示「斤兩」輸入框
         !['sd_driedfish_orig', 'sd_driedfish_spicy', 'sd_pomelo_radish'].includes(product.id)
       ) || product.id === 'ss_combo_200';
       
@@ -182,11 +183,7 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
         : product.defaultSellingPricePer600g;
 
       let estRevenue = 0;
-      if (isFixedUnit) {
-        estRevenue = salesQty * refPrice;
-      } else {
-        estRevenue = salesQty * refPrice;
-      }
+      estRevenue = salesQty * refPrice;
 
       const actualRevenue = ordersToUse.reduce((sum, order) => {
         if (order.paymentMethod === 'WASTE') return sum;
@@ -199,7 +196,6 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
 
       const diff = actualRevenue - Math.round(estRevenue);
 
-      // ✅ 系統銷量自動換算：
       const systemSoldGrams = ordersToUse.reduce((sum, order) => {
          const items = order.items.filter(item => item.productId === product.id);
          return sum + items.reduce((iSum, i) => {
@@ -305,6 +301,11 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
         .upsert(record, { onConflict: 'date' });
 
       if (error) throw error;
+
+      // 3. 結帳成功後，清除暫存的盤點資料
+      localStorage.removeItem('pos_inventory_temp');
+      // 將今日的期末庫存，設為明日的期初 (這裡為了簡單，先清空，讓使用者明天自己秤重最準)
+      setInventoryData({});
 
       alert(`✅ ${todayStr} 結帳成功！\n資料已同步，本日訂單將自動清空。`);
       onClearAllOrders();
