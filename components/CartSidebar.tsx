@@ -9,7 +9,7 @@ interface CartSidebarProps {
   onRemoveItem: (id: string) => void;
   onAddModifier: (itemId: string, modifier: string) => void;
   onCheckout: (received: number, method: PaymentMethod, customer?: Customer) => void;
-  onHoldOrder: () => void;
+  onHoldOrder: (customer: Customer, isPaid: boolean) => void; // ✅ 修改：新增參數
   onResumeOrder: () => void;
   onClearCart: () => void;
 }
@@ -52,6 +52,16 @@ export const CartSidebar: React.FC<CartSidebarProps> = ({
     setCashReceived(prev => Math.floor(prev / 10));
   };
 
+  // ✅ 新增：處理掛單按鈕點擊
+  const handleHoldClick = () => {
+    // 詢問付款狀態
+    if (window.confirm(`要將此訂單寄放/掛單嗎？\n\n客戶：${customer.name || '未填寫'}\n電話：${customer.phone || '未填寫'}\n\n請問客人【已經付款】了嗎？\n(按「確定」= 已付款，按「取消」= 未付款)`)) {
+      onHoldOrder(customer, true); // 已付款
+    } else {
+      onHoldOrder(customer, false); // 未付款
+    }
+  };
+
   const change = cashReceived > 0 ? cashReceived - total : 0;
   const isEnough = paymentMethod === 'LINE_PAY' || (cashReceived > 0 && cashReceived >= total);
 
@@ -65,12 +75,12 @@ export const CartSidebar: React.FC<CartSidebarProps> = ({
         <div className="flex gap-2">
            {heldOrderCount > 0 && cart.length === 0 && (
              <button onClick={onResumeOrder} className="px-3 py-1 bg-yellow-500 hover:bg-yellow-600 text-black font-bold rounded flex items-center gap-1 text-sm animate-pulse">
-               <TimerReset size={16} /> 取單 (1)
+               <TimerReset size={16} /> 取單 ({heldOrderCount})
              </button>
            )}
            {cart.length > 0 && (
-             <button onClick={onHoldOrder} className="px-3 py-1 bg-gray-600 hover:bg-gray-500 rounded flex items-center gap-1 text-sm">
-               <Archive size={16} /> 掛單
+             <button onClick={handleHoldClick} className="px-3 py-1 bg-gray-600 hover:bg-gray-500 rounded flex items-center gap-1 text-sm">
+               <Archive size={16} /> 寄放
              </button>
            )}
            {cart.length > 0 && (
@@ -138,7 +148,7 @@ export const CartSidebar: React.FC<CartSidebarProps> = ({
               ${showCustomerInput ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-gray-50 border-gray-200 text-gray-500'}`}
           >
             <UserCircle size={16} />
-            {customer.name || customer.phone ? `客資: ${customer.name} ${customer.phone}` : '登記客戶資料'}
+            {customer.name || customer.phone ? `客資: ${customer.name} ${customer.phone}` : '登記客戶資料 (寄放必填)'}
           </button>
           
           {showCustomerInput && (
@@ -181,7 +191,7 @@ export const CartSidebar: React.FC<CartSidebarProps> = ({
            </div>
         </div>
 
-        {/* --- 新增：報廢登記按鈕 (放在結帳區塊上方) --- */}
+        {/* 報廢登記按鈕 */}
         <div className="px-2 pb-2">
            <button 
              onClick={() => {
@@ -193,10 +203,9 @@ export const CartSidebar: React.FC<CartSidebarProps> = ({
              className="w-full flex items-center justify-center gap-2 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-500 hover:text-red-500 font-bold text-sm border border-gray-200 transition-colors disabled:opacity-50"
            >
              <AlertTriangle size={16} />
-             登記為損耗/報廢 (不計營收)
+             登記為損耗/報廢
            </button>
         </div>
-        {/* ------------------------------------------- */}
 
         {/* CASH MODE */}
         {paymentMethod === 'CASH' && (
