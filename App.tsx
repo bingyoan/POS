@@ -8,8 +8,8 @@ import { DashboardModal } from './components/DashboardModal';
 import { ComboModal } from './components/ComboModal';
 import { PinModal } from './components/PinModal'; 
 import { OrderHistoryModal } from './components/OrderHistoryModal'; 
-import { HeldOrdersModal } from './components/HeldOrdersModal'; // ✅ 新增
-import { Settings, ChefHat, LayoutGrid, ClipboardList } from 'lucide-react';
+import { HeldOrdersModal } from './components/HeldOrdersModal';
+import { Settings, ChefHat, LayoutGrid, ClipboardList, RefreshCw } from 'lucide-react'; // ✅ 新增 RefreshCw icon
 import { v4 as uuidv4 } from 'uuid';
 import { supabase } from './lib/supabase';
 
@@ -30,7 +30,6 @@ const App: React.FC = () => {
     return saved ? JSON.parse(saved) : [];
   });
 
-  // ✅ 修改：支援多筆寄放訂單 (HeldOrder[])
   const [heldOrders, setHeldOrders] = useState<HeldOrder[]>(() => {
     const saved = localStorage.getItem('pos_held_orders');
     return saved ? JSON.parse(saved) : [];
@@ -49,10 +48,49 @@ const App: React.FC = () => {
     localStorage.setItem('pos_sold_out', JSON.stringify(soldOutIds));
   }, [soldOutIds]);
 
-  // ✅ 新增：儲存寄放訂單
   useEffect(() => {
     localStorage.setItem('pos_held_orders', JSON.stringify(heldOrders));
   }, [heldOrders]);
+
+  // ✅ 新增：開機自動從雲端抓取今日訂單 (解決重新整理後資料消失的問題)
+  useEffect(() => {
+    const fetchTodayOrders = async () => {
+      const todayStr = new Date().toISOString().split('T')[0];
+      try {
+        const { data, error } = await supabase
+          .from('orders')
+          .select('*')
+          .eq('date', todayStr)
+          .order('created_at', { ascending: false });
+
+        if (error) throw error;
+
+        if (data) {
+          // 將雲端資料轉換回本地 Order 格式
+          const loadedOrders: Order[] = data.map(row => ({
+            id: row.id,
+            timestamp: new Date(row.created_at).getTime(),
+            items: row.content,
+            totalPrice: row.total_price,
+            totalCost: row.total_cost,
+            totalProfit: row.total_profit,
+            paymentMethod: row.payment_method,
+            customer: row.customer,
+            remarks: row.remarks
+          }));
+          
+          // 更新本地狀態 (如果雲端有資料，以雲端為準)
+          if (loadedOrders.length > 0) {
+            setOrders(loadedOrders);
+          }
+        }
+      } catch (err) {
+        console.error('自動同步失敗:', err);
+      }
+    };
+
+    fetchTodayOrders();
+  }, []);
 
   // --- UI State ---
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
@@ -61,7 +99,7 @@ const App: React.FC = () => {
   
   const [isPinModalOpen, setIsPinModalOpen] = useState(false);
   const [isOrderHistoryOpen, setIsOrderHistoryOpen] = useState(false);
-  const [isHeldOrdersModalOpen, setIsHeldOrdersModalOpen] = useState(false); // ✅ 新增
+  const [isHeldOrdersModalOpen, setIsHeldOrdersModalOpen] = useState(false);
 
   // --- Core Logic ---
 
@@ -74,11 +112,10 @@ const App: React.FC = () => {
   const handleAddToCart = (price: number, weight: number, type: 'standard_box' | 'custom_weight') => {
     if (!selectedProduct) return;
     
-    // 技巧：如果是三色蛋這種固定單位的，weight 我們會在 UI 層設為 1 (單位)
-    // 但為了讓 costPer600g 計算正確，如果它是固定單位的，我們可以調整算法
-    // 不過最簡單的方式是：三色蛋的 costPer600g = 70，我們把 1 塊當作 600g 的倍率 (1單位)
-    // 這裡維持原樣，只要在 constants 裡設定好 costPer600g 即可
-    const unitCost = (selectedProduct.costPer600g / 600) * weight;
+    // 如果 costPer600g 有值，按重量比例算成本；否則設為 0 (或需另外定義)
+    const unitCost = selectedProduct.costPer600g > 0 
+      ? (selectedProduct.costPer600g / 600) * weight 
+      : 0;
     
     const existingIndex = cart.findIndex(item => 
       item.productId === selectedProduct.id &&
@@ -161,7 +198,7 @@ const App: React.FC = () => {
       customer: customer && (customer.name || customer.phone) ? customer : undefined
     };
 
-    setOrders([newOrder, ...orders]);
+    setOrders(prev => [newOrder, ...prev]);
     setCart([]);
 
     try {
@@ -321,12 +358,12 @@ const App: React.FC = () => {
       <div className="w-[30%] h-full bg-white relative shadow-2xl z-20">
         <CartSidebar 
           cart={cart}
-          heldOrderCount={heldOrders.length} // ✅ 修改：傳入寄放訂單數量
+          heldOrderCount={heldOrders.length} // 傳入寄放訂單數量
           onRemoveItem={(id) => setCart(cart.filter(i => i.id !== id))}
           onAddModifier={handleAddModifier}
           onCheckout={handleCheckout}
-          onHoldOrder={handleHoldOrder} // ✅ 修改：使用新的處理函式
-          onResumeOrder={() => setIsHeldOrdersModalOpen(true)} // ✅ 修改：打開寄放列表
+          onHoldOrder={handleHoldOrder} // 傳入處理函式
+          onResumeOrder={() => setIsHeldOrdersModalOpen(true)} // 打開寄放列表
           onClearCart={() => setCart([])}
         />
       </div>
@@ -363,7 +400,7 @@ const App: React.FC = () => {
         onDeleteOrder={handleDeleteOrder}
       />
 
-      {/* ✅ 新增：寄放訂單列表視窗 */}
+      {/* 寄放訂單列表視窗 */}
       <HeldOrdersModal
         isOpen={isHeldOrdersModalOpen}
         onClose={() => setIsHeldOrdersModalOpen(false)}
