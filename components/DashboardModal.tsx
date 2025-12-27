@@ -168,12 +168,13 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
       
       const salesQty = Math.max(0, record.opening - record.closing - record.waste);
       
-      // ✅ 關鍵邏輯：強制小魚乾 (sd_driedfish) 改用秤重模式 (False)
-      // 這樣盤點時就會出現「台斤」輸入框，而不是「盒」
+      // ✅ 修正邏輯：排除所有「賣盒裝但要秤重盤點」的商品
+      // 這裡加入了 sd_driedfish_orig, sd_driedfish_spicy, sd_pomelo_radish
       const isFixedUnit = (
         product.fixedPrices && 
         product.fixedPrices.length > 0 && 
-        product.id !== 'sd_driedfish' 
+        // 排除以下 ID，讓它們強制顯示「斤兩」輸入框
+        !['sd_driedfish_orig', 'sd_driedfish_spicy', 'sd_pomelo_radish'].includes(product.id)
       ) || product.id === 'ss_combo_200';
       
       const refPrice = isFixedUnit 
@@ -199,7 +200,6 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
       const diff = actualRevenue - Math.round(estRevenue);
 
       // ✅ 系統銷量自動換算：
-      // 如果賣的是小魚乾盒裝 (沒有重量紀錄)，用售價反推重量 (Price / 單價 * 600g)
       const systemSoldGrams = ordersToUse.reduce((sum, order) => {
          const items = order.items.filter(item => item.productId === product.id);
          return sum + items.reduce((iSum, i) => {
