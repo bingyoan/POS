@@ -3,17 +3,52 @@ import { Category, Product } from './types';
 export const PRODUCTS: Product[] = [
   // Small Dishes (涼拌小菜)
   { 
-    id: 'sd_driedfish', 
-    name: '小魚干', 
+    id: 'sd_driedfish_orig', 
+    name: '小魚干 (原味)', 
     category: Category.SMALL_DISH, 
     costPer600g: 235, 
     defaultSellingPricePer600g: 650,
-    // ✅ 修改這裡：只保留 1入 和 2入特價
     fixedPrices: [
       { label: '1 盒', price: 130 },
       { label: '2 盒 (特價)', price: 250 },
       { label: '1 袋', price: 180 },
       { label: '2 袋 (特價)', price: 350 }
+    ]
+  },
+  { 
+    id: 'sd_driedfish_spicy', 
+    name: '小魚干 (辣味)', 
+    category: Category.SMALL_DISH, 
+    costPer600g: 235, 
+    defaultSellingPricePer600g: 650,
+    fixedPrices: [
+      { label: '1 盒', price: 130 },
+      { label: '2 盒 (特價)', price: 250 },
+      { label: '1 袋', price: 180 },
+      { label: '2 袋 (特價)', price: 350 }
+    ]
+  },
+  { 
+    id: 'sd_pomelo_radish', 
+    name: '柚香蘿蔔', 
+    category: Category.SMALL_DISH, 
+    // 成本 145/斤
+    costPer600g: 145, 
+    defaultSellingPricePer600g: 0, // 不秤重賣，只賣盒
+    fixedPrices: [
+      { label: '1 盒', price: 100 }
+    ]
+  },
+  { 
+    id: 'sd_3eggs', 
+    name: '三色蛋', 
+    category: Category.SMALL_DISH, 
+    // 技巧：因為是按「塊」賣，我們把 1 塊當作 1 單位(600g) 來算成本
+    // 成本 70/塊 -> 設定 costPer600g = 70
+    costPer600g: 70, 
+    defaultSellingPricePer600g: 0, 
+    fixedPrices: [
+      { label: '1 塊', price: 150 }
     ]
   },
   { id: 'sd_jellyfish', name: '海蜇皮', category: Category.SMALL_DISH, costPer600g: 130, defaultSellingPricePer600g: 300 },
