@@ -1,16 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { PRODUCTS } from './constants';
-import { Product, CartItem, Order, Category, PaymentMethod, Customer } from './types';
+import { Product, CartItem, Order, Category, PaymentMethod, Customer, HeldOrder } from './types';
 import { ProductCard } from './components/ProductCard';
 import { CartSidebar } from './components/CartSidebar';
 import { CustomWeightModal } from './components/CustomWeightModal';
 import { DashboardModal } from './components/DashboardModal';
 import { ComboModal } from './components/ComboModal';
-import { PinModal } from './components/PinModal'; // 引入密碼鎖
-import { OrderHistoryModal } from './components/OrderHistoryModal'; // 引入阿姨用的歷史紀錄
+import { PinModal } from './components/PinModal'; 
+import { OrderHistoryModal } from './components/OrderHistoryModal'; 
+import { HeldOrdersModal } from './components/HeldOrdersModal'; // ✅ 新增
 import { Settings, ChefHat, LayoutGrid, ClipboardList } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
-import { supabase } from './lib/supabase'; // 引入 Supabase 進行雲端同步
+import { supabase } from './lib/supabase';
 
 const App: React.FC = () => {
   // --- Data State ---
@@ -29,7 +30,11 @@ const App: React.FC = () => {
     return saved ? JSON.parse(saved) : [];
   });
 
-  const [heldOrder, setHeldOrder] = useState<CartItem[] | null>(null);
+  // ✅ 修改：支援多筆寄放訂單 (HeldOrder[])
+  const [heldOrders, setHeldOrders] = useState<HeldOrder[]>(() => {
+    const saved = localStorage.getItem('pos_held_orders');
+    return saved ? JSON.parse(saved) : [];
+  });
 
   // --- Persistence Effects ---
   useEffect(() => {
@@ -44,14 +49,19 @@ const App: React.FC = () => {
     localStorage.setItem('pos_sold_out', JSON.stringify(soldOutIds));
   }, [soldOutIds]);
 
+  // ✅ 新增：儲存寄放訂單
+  useEffect(() => {
+    localStorage.setItem('pos_held_orders', JSON.stringify(heldOrders));
+  }, [heldOrders]);
+
   // --- UI State ---
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [isDashboardOpen, setIsDashboardOpen] = useState(false);
   const [isComboModalOpen, setIsComboModalOpen] = useState(false);
   
-  // ✅ 新增控制開關
   const [isPinModalOpen, setIsPinModalOpen] = useState(false);
   const [isOrderHistoryOpen, setIsOrderHistoryOpen] = useState(false);
+  const [isHeldOrdersModalOpen, setIsHeldOrdersModalOpen] = useState(false); // ✅ 新增
 
   // --- Core Logic ---
 
@@ -63,7 +73,13 @@ const App: React.FC = () => {
 
   const handleAddToCart = (price: number, weight: number, type: 'standard_box' | 'custom_weight') => {
     if (!selectedProduct) return;
+    
+    // 技巧：如果是三色蛋這種固定單位的，weight 我們會在 UI 層設為 1 (單位)
+    // 但為了讓 costPer600g 計算正確，如果它是固定單位的，我們可以調整算法
+    // 不過最簡單的方式是：三色蛋的 costPer600g = 70，我們把 1 塊當作 600g 的倍率 (1單位)
+    // 這裡維持原樣，只要在 constants 裡設定好 costPer600g 即可
     const unitCost = (selectedProduct.costPer600g / 600) * weight;
+    
     const existingIndex = cart.findIndex(item => 
       item.productId === selectedProduct.id &&
       item.type === type &&
@@ -145,16 +161,14 @@ const App: React.FC = () => {
       customer: customer && (customer.name || customer.phone) ? customer : undefined
     };
 
-    // 1. 本地更新 (快速回應)
     setOrders([newOrder, ...orders]);
     setCart([]);
 
-    // 2. 雲端備份 (背景執行)
     try {
       await supabase.from('orders').insert({
         id: newOrder.id,
         date: todayStr,
-        content: newOrder.items, // JSONB
+        content: newOrder.items,
         total_price: newOrder.totalPrice,
         total_cost: newOrder.totalCost,
         total_profit: newOrder.totalProfit,
@@ -164,7 +178,6 @@ const App: React.FC = () => {
       });
     } catch (error) {
       console.error('雲端備份失敗:', error);
-      // 不阻擋 UI，讓阿姨繼續操作
     }
   };
 
@@ -173,10 +186,7 @@ const App: React.FC = () => {
   };
   
   const handleDeleteOrder = async (orderId: string) => {
-    // 1. 本地刪除
     setOrders(prev => prev.filter(o => o.id !== orderId));
-
-    // 2. 雲端同步刪除
     try {
       await supabase.from('orders').delete().eq('id', orderId);
     } catch (error) {
@@ -189,16 +199,38 @@ const App: React.FC = () => {
     localStorage.removeItem('pos_orders_today');
   };
 
-  const handleHoldOrder = () => {
+  // ✅ 新增：處理寄放訂單
+  const handleHoldOrder = (customer: Customer, isPaid: boolean) => {
     if (cart.length === 0) return;
-    setHeldOrder(cart);
+    
+    const newHeldOrder: HeldOrder = {
+      id: uuidv4(),
+      timestamp: Date.now(),
+      items: [...cart],
+      customer,
+      isPaid
+    };
+
+    setHeldOrders(prev => [newHeldOrder, ...prev]);
     setCart([]);
+    alert(`✅ 已將「${customer.name || '客人'}」的訂單寄放！\n(狀態：${isPaid ? '已付' : '未付'})`);
   };
 
-  const handleResumeOrder = () => {
-    if (!heldOrder) return;
-    setCart(heldOrder);
-    setHeldOrder(null);
+  const handleResumeOrder = (heldOrderId: string) => {
+    const orderToResume = heldOrders.find(o => o.id === heldOrderId);
+    if (!orderToResume) return;
+
+    if (cart.length > 0) {
+      if(!window.confirm('購物車內還有商品，確定要覆蓋嗎？')) return;
+    }
+
+    setCart(orderToResume.items);
+    setHeldOrders(prev => prev.filter(o => o.id !== heldOrderId));
+    setIsHeldOrdersModalOpen(false);
+  };
+
+  const handleDeleteHeldOrder = (heldOrderId: string) => {
+    setHeldOrders(prev => prev.filter(o => o.id !== heldOrderId));
   };
 
   return (
@@ -225,7 +257,7 @@ const App: React.FC = () => {
                綜合鯊魚煙 $200
              </button>
 
-             {/* ✅ 阿姨用的：今日訂單 (白色按鈕，無鎖) */}
+             {/* 阿姨用的：今日訂單 */}
              <button 
                onClick={() => setIsOrderHistoryOpen(true)}
                className="p-3 rounded-xl bg-white border-2 border-blue-100 text-blue-600 hover:bg-blue-50 hover:border-blue-300 transition-all shadow-sm flex items-center gap-2"
@@ -235,7 +267,7 @@ const App: React.FC = () => {
                {orders.length > 0 && <span className="bg-blue-600 text-white text-xs px-2 py-0.5 rounded-full">{orders.length}</span>}
              </button>
 
-             {/* ✅ 老闆用的：後台設置 (黑色按鈕，有鎖) */}
+             {/* 老闆用的：後台設置 */}
              <button 
               onClick={() => setIsPinModalOpen(true)}
               className="p-3 rounded-xl bg-gray-800 text-white hover:bg-gray-700 relative"
@@ -289,12 +321,12 @@ const App: React.FC = () => {
       <div className="w-[30%] h-full bg-white relative shadow-2xl z-20">
         <CartSidebar 
           cart={cart}
-          heldOrderCount={heldOrder ? 1 : 0}
+          heldOrderCount={heldOrders.length} // ✅ 修改：傳入寄放訂單數量
           onRemoveItem={(id) => setCart(cart.filter(i => i.id !== id))}
           onAddModifier={handleAddModifier}
           onCheckout={handleCheckout}
-          onHoldOrder={handleHoldOrder}
-          onResumeOrder={handleResumeOrder}
+          onHoldOrder={handleHoldOrder} // ✅ 修改：使用新的處理函式
+          onResumeOrder={() => setIsHeldOrdersModalOpen(true)} // ✅ 修改：打開寄放列表
           onClearCart={() => setCart([])}
         />
       </div>
@@ -306,12 +338,11 @@ const App: React.FC = () => {
         onConfirm={handleAddToCart}
       />
 
-      {/* ✅ 密碼鎖：密碼輸入正確後才會開啟 Dashboard */}
       <PinModal 
         isOpen={isPinModalOpen}
         onClose={() => setIsPinModalOpen(false)}
         onSuccess={() => setIsDashboardOpen(true)}
-        correctPin="8888" // 預設密碼
+        correctPin="8888" 
       />
 
       <DashboardModal 
@@ -325,12 +356,20 @@ const App: React.FC = () => {
         onClearAllOrders={handleClearAllOrders}
       />
 
-      {/* ✅ 阿姨用的安全訂單查詢 (無鎖) */}
       <OrderHistoryModal
         isOpen={isOrderHistoryOpen}
         onClose={() => setIsOrderHistoryOpen(false)}
         orders={orders}
         onDeleteOrder={handleDeleteOrder}
+      />
+
+      {/* ✅ 新增：寄放訂單列表視窗 */}
+      <HeldOrdersModal
+        isOpen={isHeldOrdersModalOpen}
+        onClose={() => setIsHeldOrdersModalOpen(false)}
+        heldOrders={heldOrders}
+        onResume={handleResumeOrder}
+        onDelete={handleDeleteHeldOrder}
       />
 
       <ComboModal 
