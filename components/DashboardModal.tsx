@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Order, Product, InventoryRecord, DailyClosingRecord } from '../types';
 import { supabase } from '../lib/supabase';
-import { X, TrendingUp, List, BarChart3, Cloud, RefreshCw, Trash2, ClipboardList, Save, Calendar, Search, PieChart as PieChartIcon, Eye, User, Phone, FileText, Clock } from 'lucide-react';
+import { X, TrendingUp, List, BarChart3, Cloud, RefreshCw, Trash2, ClipboardList, Save, Calendar, Search, PieChart as PieChartIcon, Eye, User, Phone, FileText, Clock, ShoppingCart } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
 
 interface DashboardModalProps {
@@ -238,6 +238,20 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
       .reduce((sum, o) => sum + o.totalCost, 0);
   }, [ordersToUse]);
 
+  // ✅ 新增：歷史報表的商品統計
+  const reportItemSummary = useMemo(() => {
+    const summary: Record<string, number> = {};
+    historyRecords.forEach(record => {
+      if (record.sales_summary) {
+         Object.entries(record.sales_summary).forEach(([name, qty]) => {
+           summary[name] = (summary[name] || 0) + qty;
+         });
+      }
+    });
+    // 排序：數量多的在前面
+    return Object.entries(summary).sort((a, b) => b[1] - a[1]);
+  }, [historyRecords]);
+
   // --- Handlers ---
 
   const handleInventoryChange = (productId: string, field: keyof InventoryRecord, value: number) => {
@@ -275,18 +289,29 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
     }
   }, [isOpen, activeTab]);
 
-  // ✅ 核心修正：日結時，自動將「今日期末」轉為「明日期初」
   const handleCloseDay = async () => {
     if (!window.confirm('確定要執行本日結帳嗎？\n\n1. 營收數據將存入雲端報表。\n2. 本日訂單將從雲端「永久移除」。\n3. 系統會自動將「今日期末庫存」帶入「明日期初」。')) return;
     
     setIsClosingDay(true);
     
+    // 計算財務數據
     const totalSalesCash = ordersToUse.filter(o => o.paymentMethod === 'CASH').reduce((sum, o) => sum + o.totalPrice, 0);
     const totalSalesLine = ordersToUse.filter(o => o.paymentMethod === 'LINE_PAY').reduce((sum, o) => sum + o.totalPrice, 0);
     const totalRevenue = totalSalesCash + totalSalesLine;
     const totalCost = ordersToUse.reduce((sum, o) => sum + o.totalCost, 0);
     const totalProfit = totalRevenue - totalCost;
     const todayStr = new Date().toISOString().split('T')[0];
+
+    // ✅ 新增：計算今日商品銷售統計 (Before deleting orders)
+    const dailySalesSummary: Record<string, number> = {};
+    ordersToUse.forEach(order => {
+      // 排除損耗單，只統計實際銷售
+      if (order.paymentMethod !== 'WASTE') {
+        order.items.forEach(item => {
+          dailySalesSummary[item.productName] = (dailySalesSummary[item.productName] || 0) + item.quantity;
+        });
+      }
+    });
 
     const record: DailyClosingRecord = {
       date: todayStr,
@@ -295,7 +320,8 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
       total_cost: totalCost,
       order_count: ordersToUse.length,
       inventory_variance: totalInventoryDiff !== 0 ? totalInventoryDiff : -totalWasteCost, 
-      note: `日結 - 現金:${totalSalesCash}, LINE:${totalSalesLine}, 系統損耗:${totalWasteCost}`
+      note: `日結 - 現金:${totalSalesCash}, LINE:${totalSalesLine}, 系統損耗:${totalWasteCost}`,
+      sales_summary: dailySalesSummary // ✅ 存入資料庫
     };
 
     try {
@@ -314,26 +340,22 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
 
       if (deleteError) throw deleteError;
 
-      // 3. ✅ 自動結轉邏輯 (The Magic)
-      // 建立明天的庫存表：把今天的 closing (期末) 複製到明天的 opening (期初)
+      // 3. 自動結轉邏輯
       const nextDayInventory: Record<string, InventoryRecord> = {};
-      
       Object.keys(inventoryData).forEach(productId => {
         const currentRecord = inventoryData[productId];
-        // 只有當期末有數字時才帶入，避免帶入 0
         if (currentRecord && currentRecord.closing > 0) {
           nextDayInventory[productId] = {
-            opening: currentRecord.closing, // 昨晚剩的 = 明早有的
-            closing: 0, // 明天的期末先歸零
-            waste: 0    // 明天的損耗先歸零
+            opening: currentRecord.closing,
+            closing: 0,
+            waste: 0 
           };
         }
       });
 
-      // 更新狀態 (這會透過我們剛寫的 useEffect 自動存入 localStorage)
       setInventoryData(nextDayInventory);
 
-      alert(`✅ ${todayStr} 結帳成功！\n\n系統已自動將「期末庫存」帶入為「明日期初」。\n您明天可以直接開賣！`);
+      alert(`✅ ${todayStr} 結帳成功！\n\n1. 營收報表已儲存 (含商品統計)。\n2. 訂單明細已清除。\n3. 期末庫存已帶入明日期初。`);
       onClearAllOrders();
       onClose();
 
@@ -543,8 +565,8 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
 
           {/* TAB 2: REPORTS (Supabase History) */}
           {activeTab === 'reports' && (
-             <div className="h-full flex flex-col p-6">
-                <div className="bg-gray-800 rounded-xl p-4 mb-6 flex flex-wrap items-center gap-4 border border-gray-700">
+             <div className="h-full flex flex-col p-6 overflow-hidden">
+                <div className="bg-gray-800 rounded-xl p-4 mb-6 flex flex-wrap items-center gap-4 border border-gray-700 shrink-0">
                    <div className="flex items-center gap-2">
                       <Calendar size={18} className="text-blue-400" />
                       <span className="text-sm font-bold text-gray-300">日期範圍：</span>
@@ -572,7 +594,7 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
                    </button>
                 </div>
 
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6 shrink-0">
                    <div className="bg-gradient-to-br from-blue-900/40 to-gray-900 border border-blue-500/30 p-4 rounded-xl">
                       <p className="text-blue-300 text-xs font-bold uppercase">區間總營收</p>
                       <p className="text-2xl font-black text-white mt-1">${historyTotalRevenue.toLocaleString()}</p>
@@ -583,44 +605,73 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
                    </div>
                 </div>
 
-                <div className="flex-1 overflow-auto rounded-xl border border-gray-700/50 shadow-inner bg-gray-900/50 no-scrollbar relative">
-                   {loadingHistory && (
-                     <div className="absolute inset-0 bg-gray-900/80 z-20 flex items-center justify-center">
-                        <RefreshCw size={48} className="text-blue-500 animate-spin" />
-                     </div>
-                   )}
-                   <table className="w-full text-left border-collapse">
-                      <thead className="bg-gray-800 sticky top-0 z-10 text-xs uppercase text-gray-400 font-bold tracking-wider">
-                         <tr>
-                            <th className="p-4 border-b border-gray-700">日期</th>
-                            <th className="p-4 border-b border-gray-700 text-right">總營收</th>
-                            <th className="p-4 border-b border-gray-700 text-right">總成本</th>
-                            <th className="p-4 border-b border-gray-700 text-right">淨利</th>
-                            <th className="p-4 border-b border-gray-700 text-right">訂單數</th>
-                            <th className="p-4 border-b border-gray-700 text-right">盤點損溢</th>
-                            <th className="p-4 border-b border-gray-700 text-left">備註</th>
-                         </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-800 text-sm">
-                         {historyRecords.length === 0 ? (
-                           <tr><td colSpan={7} className="p-8 text-center text-gray-500 italic">無資料，請調整日期範圍查詢</td></tr>
+                <div className="flex-1 flex gap-6 overflow-hidden">
+                   {/* Left: Financial Records */}
+                   <div className="flex-1 overflow-auto rounded-xl border border-gray-700/50 shadow-inner bg-gray-900/50 no-scrollbar relative">
+                      {loadingHistory && (
+                        <div className="absolute inset-0 bg-gray-900/80 z-20 flex items-center justify-center">
+                           <RefreshCw size={48} className="text-blue-500 animate-spin" />
+                        </div>
+                      )}
+                      <table className="w-full text-left border-collapse">
+                         <thead className="bg-gray-800 sticky top-0 z-10 text-xs uppercase text-gray-400 font-bold tracking-wider">
+                            <tr>
+                               <th className="p-4 border-b border-gray-700">日期</th>
+                               <th className="p-4 border-b border-gray-700 text-right">總營收</th>
+                               <th className="p-4 border-b border-gray-700 text-right">淨利</th>
+                               <th className="p-4 border-b border-gray-700 text-right">損溢</th>
+                               <th className="p-4 border-b border-gray-700 text-left">備註</th>
+                            </tr>
+                         </thead>
+                         <tbody className="divide-y divide-gray-800 text-sm">
+                            {historyRecords.length === 0 ? (
+                              <tr><td colSpan={5} className="p-8 text-center text-gray-500 italic">無資料</td></tr>
+                            ) : (
+                              historyRecords.map(record => (
+                                 <tr key={record.id} className="hover:bg-gray-800/30 transition-colors">
+                                    <td className="p-4 font-bold text-gray-200 whitespace-nowrap">{record.date}</td>
+                                    <td className="p-4 text-right font-mono text-blue-300">${record.total_revenue.toLocaleString()}</td>
+                                    <td className="p-4 text-right font-mono text-emerald-400 font-bold">${record.total_profit.toLocaleString()}</td>
+                                    <td className={`p-4 text-right font-mono font-bold ${record.inventory_variance < 0 ? 'text-red-400' : 'text-green-400'}`}>
+                                       {record.inventory_variance > 0 ? '+' : ''}{record.inventory_variance}
+                                    </td>
+                                    <td className="p-4 text-gray-500 truncate max-w-[100px]" title={record.note || ''}>{record.note || '-'}</td>
+                                 </tr>
+                              ))
+                            )}
+                         </tbody>
+                      </table>
+                   </div>
+
+                   {/* Right: Item Sales Summary */}
+                   <div className="w-1/3 bg-gray-800/50 rounded-xl border border-gray-700 flex flex-col overflow-hidden">
+                      <div className="p-3 bg-gray-800 border-b border-gray-700 font-bold text-gray-300 flex items-center gap-2">
+                         <ShoppingCart size={16} className="text-yellow-500"/>
+                         區間商品熱銷排行
+                      </div>
+                      <div className="flex-1 overflow-y-auto p-2 no-scrollbar">
+                         {reportItemSummary.length === 0 ? (
+                            <p className="text-center text-gray-500 mt-10 text-sm">無商品銷售數據 (新功能啟用後生效)</p>
                          ) : (
-                           historyRecords.map(record => (
-                              <tr key={record.id} className="hover:bg-gray-800/30 transition-colors">
-                                 <td className="p-4 font-bold text-gray-200">{record.date}</td>
-                                 <td className="p-4 text-right font-mono text-blue-300">${record.total_revenue.toLocaleString()}</td>
-                                 <td className="p-4 text-right font-mono text-gray-400">${record.total_cost.toLocaleString()}</td>
-                                 <td className="p-4 text-right font-mono text-emerald-400 font-bold">${record.total_profit.toLocaleString()}</td>
-                                 <td className="p-4 text-right text-gray-300">{record.order_count}</td>
-                                 <td className={`p-4 text-right font-mono font-bold ${record.inventory_variance < 0 ? 'text-red-400' : 'text-green-400'}`}>
-                                    {record.inventory_variance > 0 ? '+' : ''}{record.inventory_variance}
-                                 </td>
-                                 <td className="p-4 text-gray-500 truncate max-w-xs" title={record.note || ''}>{record.note || '-'}</td>
-                              </tr>
-                           ))
+                            <table className="w-full text-sm">
+                               <thead className="text-xs text-gray-500 uppercase border-b border-gray-700">
+                                  <tr>
+                                     <th className="text-left py-2 pl-2">商品名稱</th>
+                                     <th className="text-right py-2 pr-2">總銷量</th>
+                                  </tr>
+                               </thead>
+                               <tbody className="divide-y divide-gray-700/50">
+                                  {reportItemSummary.map(([name, qty]) => (
+                                     <tr key={name} className="hover:bg-gray-700/30">
+                                        <td className="py-2 pl-2 text-gray-200">{name}</td>
+                                        <td className="py-2 pr-2 text-right font-mono text-yellow-400 font-bold">{qty}</td>
+                                     </tr>
+                                  ))}
+                               </tbody>
+                            </table>
                          )}
-                      </tbody>
-                   </table>
+                      </div>
+                   </div>
                 </div>
              </div>
           )}
