@@ -1,5 +1,3 @@
-components/CustomWeightModal.tsx
-
 import React, { useState, useEffect } from 'react';
 import { Product, Category } from '../types';
 import { PRICING_RULES } from '../constants';
