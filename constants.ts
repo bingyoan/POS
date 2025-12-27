@@ -78,11 +78,11 @@ export const PRODUCTS: Product[] = [
 export const PRICING_RULES = {
   smallDish: {
     standardBoxPrice: 100,
-    minCustomPrice: 50,
+    minCustomPrice: 1,
   },
   shark: {
     standardBoxPrice: 100,
-    minCustomPrice: 100,
+    minCustomPrice: 1,
   },
   combo: {
     price: 200,
