@@ -16,6 +16,8 @@ export const CustomWeightModal: React.FC<CustomWeightModalProps> = ({
   onClose, 
   onConfirm 
 }) => {
+  // 1. 所有 Hooks 必須放在最上面 (不能被 return 擋住)
+  
   // 輸入模式
   const [inputMode, setInputMode] = useState<'price' | 'weight'>('price');
   
@@ -34,23 +36,22 @@ export const CustomWeightModal: React.FC<CustomWeightModalProps> = ({
     }
   }, [isOpen]);
 
-  if (!isOpen || !product) return null;
-
-  // --- 即時計算邏輯 (取代原本會當機的 useEffect) ---
-  
-  const minPrice = product.category === Category.SHARK_SMOKE 
+  // 安全取得商品數據 (防止 product 為 null 時報錯)
+  const minPrice = product?.category === Category.SHARK_SMOKE 
     ? PRICING_RULES.shark.minCustomPrice 
     : PRICING_RULES.smallDish.minCustomPrice;
 
-  const pricePerCatty = product.defaultSellingPricePer600g || 300; 
+  const pricePerCatty = product?.defaultSellingPricePer600g || 300; 
 
-  // 1. 如果是「金額模式」，計算出重量
+  // 即時計算邏輯 (useMemo 必須放在 if return 之前)
+  
+  // A. 如果是「金額模式」，計算出重量
   const calculatedWeightFromPrice = useMemo(() => {
     const price = parseFloat(inputValue) || 0;
     return (price / pricePerCatty) * 600; // 克數
   }, [inputValue, pricePerCatty]);
 
-  // 2. 如果是「重量模式」，計算出金額
+  // B. 如果是「重量模式」，計算出金額
   const calculatedPriceFromWeight = useMemo(() => {
     const catty = parseFloat(cattyInput) || 0;
     const tael = parseFloat(taelInput) || 0;
@@ -58,12 +59,15 @@ export const CustomWeightModal: React.FC<CustomWeightModalProps> = ({
     return Math.round(totalCatty * pricePerCatty);
   }, [cattyInput, taelInput, pricePerCatty]);
 
-  // 3. 決定當前要顯示/判斷的「最終價格」
+  // C. 決定當前要顯示/判斷的「最終價格」
   const currentPrice = inputMode === 'price' 
     ? (parseFloat(inputValue) || 0) 
     : calculatedPriceFromWeight;
 
-  const isBelowMin = currentPrice > 0 && currentPrice < minPrice;
+  const isBelowMin = currentPrice > 0 && currentPrice < (minPrice || 0);
+
+  // --- 2. 邏輯處理完後，這裡才能決定是否不渲染 ---
+  if (!isOpen || !product) return null;
 
   // --- 送出邏輯 ---
   const handleConfirm = () => {
