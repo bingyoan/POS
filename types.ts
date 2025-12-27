@@ -72,5 +72,7 @@ export interface DailyClosingRecord {
   order_count: number;
   inventory_variance: number;
   note?: string;
+  // ✅ 新增這一行：用來存商品銷售統計 { "小魚乾": 5, "鯊魚煙": 2 }
+  sales_summary?: Record<string, number>; 
   created_at?: string;
 }
