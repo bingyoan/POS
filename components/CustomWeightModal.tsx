@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Product, Category } from '../types';
 import { PRICING_RULES } from '../constants';
 import { X, Scale, AlertTriangle } from 'lucide-react';
@@ -16,67 +16,65 @@ export const CustomWeightModal: React.FC<CustomWeightModalProps> = ({
   onClose, 
   onConfirm 
 }) => {
-  // 輸入模式：'price' (算重量) 或 'weight' (算價格)
+  // 輸入模式
   const [inputMode, setInputMode] = useState<'price' | 'weight'>('price');
   
-  // 數值狀態
-  const [inputValue, setInputValue] = useState<string>(''); // 用字串處理輸入比較好控制
-  const [calculatedValue, setCalculatedValue] = useState<number>(0);
+  // 數值狀態 (字串)
+  const [inputValue, setInputValue] = useState<string>(''); 
+  const [cattyInput, setCattyInput] = useState<string>(''); 
+  const [taelInput, setTaelInput] = useState<string>('');   
 
-  // 台斤/兩 專用狀態 (當 inputMode === 'weight' 時使用)
-  const [cattyInput, setCattyInput] = useState<string>(''); // 斤
-  const [taelInput, setTaelInput] = useState<string>('');   // 兩
-
+  // 當視窗打開時，重置所有欄位
   useEffect(() => {
     if (isOpen) {
       setInputValue('');
-      setCalculatedValue(0);
       setCattyInput('');
       setTaelInput('');
-      setInputMode('price'); // 預設用金額輸入
+      setInputMode('price'); 
     }
   }, [isOpen]);
 
   if (!isOpen || !product) return null;
 
-  // 取得此商品的最低價格限制
+  // --- 即時計算邏輯 (取代原本會當機的 useEffect) ---
+  
   const minPrice = product.category === Category.SHARK_SMOKE 
     ? PRICING_RULES.shark.minCustomPrice 
     : PRICING_RULES.smallDish.minCustomPrice;
 
-  // 計算邏輯
-  const pricePerCatty = product.defaultSellingPricePer600g || 300; // 預設一斤300避免除以0
+  const pricePerCatty = product.defaultSellingPricePer600g || 300; 
 
-  // 當輸入改變時的即時計算
-  useEffect(() => {
-    if (inputMode === 'price') {
-      // 輸入金額 -> 算重量
-      const price = parseFloat(inputValue) || 0;
-      // 公式：金額 / 單價 * 600g
-      const weight = (price / pricePerCatty) * 600;
-      setCalculatedValue(weight);
-    } else {
-      // 輸入重量(斤/兩) -> 算金額
-      const catty = parseFloat(cattyInput) || 0;
-      const tael = parseFloat(taelInput) || 0;
-      const totalCatty = catty + (tael / 16);
-      
-      // 公式：總台斤 * 單價
-      const price = Math.round(totalCatty * pricePerCatty);
-      setCalculatedValue(price);
-    }
-  }, [inputValue, cattyInput, taelInput, inputMode, pricePerCatty]);
+  // 1. 如果是「金額模式」，計算出重量
+  const calculatedWeightFromPrice = useMemo(() => {
+    const price = parseFloat(inputValue) || 0;
+    return (price / pricePerCatty) * 600; // 克數
+  }, [inputValue, pricePerCatty]);
 
+  // 2. 如果是「重量模式」，計算出金額
+  const calculatedPriceFromWeight = useMemo(() => {
+    const catty = parseFloat(cattyInput) || 0;
+    const tael = parseFloat(taelInput) || 0;
+    const totalCatty = catty + (tael / 16);
+    return Math.round(totalCatty * pricePerCatty);
+  }, [cattyInput, taelInput, pricePerCatty]);
+
+  // 3. 決定當前要顯示/判斷的「最終價格」
+  const currentPrice = inputMode === 'price' 
+    ? (parseFloat(inputValue) || 0) 
+    : calculatedPriceFromWeight;
+
+  const isBelowMin = currentPrice > 0 && currentPrice < minPrice;
+
+  // --- 送出邏輯 ---
   const handleConfirm = () => {
     let finalPrice = 0;
     let finalWeight = 0;
 
     if (inputMode === 'price') {
       finalPrice = parseFloat(inputValue) || 0;
-      finalWeight = calculatedValue;
+      finalWeight = calculatedWeightFromPrice;
     } else {
-      finalPrice = calculatedValue;
-      // 轉換輸入的斤兩為公克
+      finalPrice = calculatedPriceFromWeight;
       const catty = parseFloat(cattyInput) || 0;
       const tael = parseFloat(taelInput) || 0;
       finalWeight = (catty * 600) + (tael * 37.5);
@@ -84,22 +82,9 @@ export const CustomWeightModal: React.FC<CustomWeightModalProps> = ({
 
     if (finalPrice <= 0) return;
 
-    // ✅ 修正：就算低於低消，也允許加入 (為了報廢或是熟客少切)
-    // 我們只在 UI 上顯示警告，但不擋住 onConfirm
     onConfirm(finalPrice, finalWeight, 'custom_weight');
     onClose();
   };
-
-  const handleNumClick = (num: number) => {
-    if (inputMode === 'price') {
-      setInputValue(prev => prev + num.toString());
-    } else {
-      // 這裡簡化處理，焦點在哪就輸入哪，目前先假設只能點擊輸入框輸入
-    }
-  };
-
-  const currentPrice = inputMode === 'price' ? (parseFloat(inputValue) || 0) : calculatedValue;
-  const isBelowMin = currentPrice > 0 && currentPrice < minPrice;
 
   return (
     <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -151,8 +136,9 @@ export const CustomWeightModal: React.FC<CustomWeightModalProps> = ({
                   />
                 </div>
                 <p className="mt-2 text-gray-500 font-mono">
-                  ≈ {calculatedValue > 0 ? (calculatedValue / 600 * 16).toFixed(1) : 0} 兩 
-                  ({calculatedValue.toFixed(0)}g)
+                  {/* 即時顯示換算的重量 */}
+                  ≈ {(calculatedWeightFromPrice / 600 * 16).toFixed(1)} 兩 
+                  ({calculatedWeightFromPrice.toFixed(0)}g)
                 </p>
               </div>
             ) : (
@@ -183,7 +169,8 @@ export const CustomWeightModal: React.FC<CustomWeightModalProps> = ({
                   </div>
                 </div>
                 <p className="mt-4 text-3xl font-black text-blue-600">
-                  = ${calculatedValue}
+                  {/* 即時顯示換算的金額 */}
+                  = ${calculatedPriceFromWeight}
                 </p>
               </div>
             )}
@@ -200,7 +187,7 @@ export const CustomWeightModal: React.FC<CustomWeightModalProps> = ({
           {/* 確認按鈕 */}
           <button
             onClick={handleConfirm}
-            // ✅ 修正：只有金額 <= 0 才禁止，低於低消依然可以按 (報廢用)
+            // 只有金額 <= 0 才禁止，低於低消依然可以按 (報廢用)
             disabled={currentPrice <= 0}
             className={`w-full py-4 rounded-xl text-xl font-black shadow-lg transition-all flex items-center justify-center gap-2
               ${currentPrice <= 0
