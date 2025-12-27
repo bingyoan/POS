@@ -1,7 +1,9 @@
-import React, { useState, useEffect, useRef } from 'react';
+components/CustomWeightModal.tsx
+
+import React, { useState, useEffect } from 'react';
 import { Product, Category } from '../types';
 import { PRICING_RULES } from '../constants';
-import { X, Scale, Package } from 'lucide-react';
+import { Scale, Package, Calculator, X } from 'lucide-react';
 
 interface CustomWeightModalProps {
   product: Product | null;
@@ -10,160 +12,163 @@ interface CustomWeightModalProps {
   onConfirm: (price: number, weight: number, type: 'standard_box' | 'custom_weight') => void;
 }
 
-export const CustomWeightModal: React.FC<CustomWeightModalProps> = ({ 
-  product, 
-  isOpen, 
-  onClose, 
-  onConfirm 
-}) => {
-  const [priceStr, setPriceStr] = useState('');
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  // 當視窗打開時，重置輸入並聚焦
+export const CustomWeightModal: React.FC<CustomWeightModalProps> = ({ product, isOpen, onClose, onConfirm }) => {
+  const [tab, setTab] = useState<'standard' | 'price' | 'weight'>('standard');
+  const [inputValue, setInputValue] = useState<string>('');
+  const [selectedFixedPrice, setSelectedFixedPrice] = useState<number | null>(null);
+  
   useEffect(() => {
     if (isOpen) {
-      setPriceStr('');
-      // 如果沒有固定選項(只能秤重)，自動聚焦輸入框
-      if (!product?.fixedPrices || product.fixedPrices.length === 0) {
-        setTimeout(() => {
-          if (inputRef.current) {
-            inputRef.current.focus();
-          }
-        }, 100);
-      }
+      setInputValue('');
+      setTab('standard');
+      setSelectedFixedPrice(null);
     }
-  }, [isOpen, product]);
+  }, [isOpen]);
 
   if (!isOpen || !product) return null;
 
-  const pricePerCatty = product.defaultSellingPricePer600g || 300;
-  
-  // --- 1. 處理「固定價格 (盒裝)」點擊 ---
-  const handleFixedPriceClick = (price: number) => {
-    const estimatedWeight = (price / pricePerCatty) * 600;
-    onConfirm(price, estimatedWeight, 'standard_box');
-    onClose();
-  };
+  const isShark = product.category === Category.SHARK_SMOKE;
+  const standardPrice = isShark ? PRICING_RULES.shark.standardBoxPrice : PRICING_RULES.smallDish.standardBoxPrice;
+  const minPrice = isShark ? PRICING_RULES.shark.minCustomPrice : PRICING_RULES.smallDish.minCustomPrice;
 
-  // --- 2. 處理「自訂金額 (秤重/報廢)」輸入 ---
-  const currentPrice = parseFloat(priceStr) || 0;
-  const estimatedWeight = (currentPrice / pricePerCatty) * 600;
-  const estimatedTael = (estimatedWeight / 600) * 16;
+  const getCalculatedValues = () => {
+    const pricePerGram = product.defaultSellingPricePer600g / 600;
 
-  const handleCustomSubmit = () => {
-    // ✅ 修改重點：只要大於 0 元就可以，取消 100 元限制
-    if (currentPrice <= 0) return;
-    
-    onConfirm(currentPrice, estimatedWeight, 'custom_weight');
-    onClose();
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      handleCustomSubmit();
+    if (tab === 'standard') {
+      // Handle products with multiple fixed prices (like Dried Fish)
+      const currentPrice = selectedFixedPrice || (product.fixedPrices ? product.fixedPrices[0].price : standardPrice);
+      return { price: currentPrice, weight: Math.round(currentPrice / pricePerGram) };
     }
+
+    const val = parseFloat(inputValue);
+    if (tab === 'price') {
+      if (isNaN(val) || val <= 0) return { price: 0, weight: 0 };
+      return { price: Math.round(val), weight: Math.round(val / pricePerGram) };
+    }
+    if (tab === 'weight') {
+      if (isNaN(val) || val <= 0) return { price: 0, weight: 0 };
+      return { price: Math.round(val * pricePerGram), weight: Math.round(val) };
+    }
+    return { price: 0, weight: 0 };
   };
 
-  // 快捷金額按鈕 (給自訂輸入用)
-  const quickAmounts = [50, 100, 150, 200, 300];
+  const { price, weight } = getCalculatedValues();
+  const isValid = tab === 'standard' || price >= minPrice;
 
   return (
-    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl w-full max-w-md overflow-hidden shadow-2xl transform transition-all">
+    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={(e) => {
+        if(e.target === e.currentTarget) onClose();
+    }}>
+      <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
         {/* Header */}
-        <div className="bg-gray-800 text-white p-4 flex justify-between items-center">
-          <h2 className="text-xl font-black flex items-center gap-2">
-            <Scale size={24} className="text-yellow-400"/>
-            {product.name}
-          </h2>
-          <button onClick={onClose} className="p-2 hover:bg-gray-700 rounded-full transition-colors">
+        <div className={`p-4 flex justify-between items-center ${isShark ? 'bg-red-500' : 'bg-emerald-600'}`}>
+          <div className="flex flex-col">
+            <h3 className="text-2xl font-bold text-white">{product.name}</h3>
+            <span className="text-white/80 text-xs font-bold">成本 ${product.costPer600g} / 售價 ${product.defaultSellingPricePer600g} (斤)</span>
+          </div>
+          <button onClick={onClose} className="p-2 bg-white/20 hover:bg-white/30 rounded-full text-white transition-colors">
             <X size={24} />
           </button>
         </div>
 
-        <div className="p-6 space-y-6">
-          
-          {/* 區塊 A: 固定選項 (如果有的話，例如小魚乾、鴨賞) */}
-          {product.fixedPrices && product.fixedPrices.length > 0 && (
-            <div>
-              <p className="text-gray-500 text-xs font-bold uppercase mb-2 flex items-center gap-1">
-                <Package size={14}/> 快速選擇 (盒裝)
-              </p>
-              <div className="grid grid-cols-2 gap-3">
-                {product.fixedPrices.map((option, index) => (
-                  <button
-                    key={index}
-                    onClick={() => handleFixedPriceClick(option.price)}
-                    className="bg-blue-50 hover:bg-blue-100 border-2 border-blue-200 text-blue-800 py-4 rounded-xl font-bold text-lg transition-all active:scale-95 flex flex-col items-center justify-center shadow-sm"
-                  >
-                    <span>{option.label}</span>
-                    <span className="text-blue-600 text-sm">${option.price}</span>
-                  </button>
-                ))}
-              </div>
-              
-              <div className="relative flex py-4 items-center">
-                <div className="flex-grow border-t border-gray-200"></div>
-                <span className="flex-shrink-0 mx-4 text-gray-400 text-xs font-bold">或 輸入其他金額</span>
-                <div className="flex-grow border-t border-gray-200"></div>
-              </div>
+        {/* Tabs */}
+        <div className="flex p-2 gap-2 bg-gray-100">
+          <button 
+            onClick={() => setTab('standard')}
+            className={`flex-1 py-4 rounded-xl font-bold text-lg flex flex-col items-center justify-center gap-1 transition-all ${tab === 'standard' ? 'bg-white shadow-md text-blue-600 ring-2 ring-blue-500' : 'text-gray-500 hover:bg-gray-200'}`}
+          >
+            <Package size={24} />
+            <span>固定規格</span>
+          </button>
+          <button 
+             onClick={() => { setTab('price'); setInputValue(''); }}
+             className={`flex-1 py-4 rounded-xl font-bold text-lg flex flex-col items-center justify-center gap-1 transition-all ${tab === 'price' ? 'bg-white shadow-md text-blue-600 ring-2 ring-blue-500' : 'text-gray-500 hover:bg-gray-200'}`}
+          >
+            <span className="text-2xl">NT$</span>
+            <span>輸入金額</span>
+          </button>
+          <button 
+             onClick={() => { setTab('weight'); setInputValue(''); }}
+             className={`flex-1 py-4 rounded-xl font-bold text-lg flex flex-col items-center justify-center gap-1 transition-all ${tab === 'weight' ? 'bg-white shadow-md text-blue-600 ring-2 ring-blue-500' : 'text-gray-500 hover:bg-gray-200'}`}
+          >
+            <Scale size={24} />
+            <span>輸入重量</span>
+          </button>
+        </div>
+
+        {/* Content */}
+        <div className="p-6 flex-1 flex flex-col justify-center">
+          {tab === 'standard' ? (
+            <div className="flex flex-col gap-4 py-4">
+               {!product.fixedPrices ? (
+                 <div className="text-center">
+                    <p className="text-gray-500 text-lg font-bold">標準盒裝價格</p>
+                    <p className="text-6xl font-black text-gray-800 mt-2">NT${standardPrice}</p>
+                 </div>
+               ) : (
+                 <div className="grid grid-cols-2 gap-4">
+                   {product.fixedPrices.map((fp) => (
+                     <button
+                       key={fp.label}
+                       onClick={() => setSelectedFixedPrice(fp.price)}
+                       className={`p-4 rounded-2xl border-2 flex flex-col items-center justify-center transition-all ${
+                         (selectedFixedPrice === fp.price || (!selectedFixedPrice && fp.price === product.fixedPrices![0].price))
+                           ? 'border-blue-500 bg-blue-50' 
+                           : 'border-gray-200 hover:bg-gray-50'
+                       }`}
+                     >
+                       <span className="text-gray-500 font-bold mb-1">{fp.label}</span>
+                       <span className="text-3xl font-black text-gray-800">NT${fp.price}</span>
+                     </button>
+                   ))}
+                 </div>
+               )}
             </div>
+          ) : (
+             <div className="mb-6">
+                <label className="block text-center text-gray-500 mb-2 font-medium">
+                  請輸入 {tab === 'price' ? '購買金額 (元)' : '秤重重量 (克)'}
+                </label>
+                <div className="relative max-w-xs mx-auto">
+                  <input
+                    type="number"
+                    pattern="[0-9]*"
+                    inputMode="numeric"
+                    value={inputValue}
+                    onChange={(e) => setInputValue(e.target.value)}
+                    className="w-full text-5xl font-black p-4 border-b-4 border-blue-500 focus:outline-none text-center bg-gray-50 rounded-t-xl"
+                    placeholder="0"
+                    autoFocus
+                  />
+                </div>
+                {!isValid && price > 0 && (
+                   <p className="text-red-500 font-bold text-center mt-2">最低消費金額 NT${minPrice}</p>
+                )}
+             </div>
           )}
 
-          {/* 區塊 B: 自訂輸入 (秤重/損耗) */}
-          <div>
-            {!product.fixedPrices && (
-               <p className="text-gray-500 text-xs font-bold uppercase mb-2 flex items-center gap-1">
-                 <Scale size={14}/> 輸入金額 (秤重/損耗)
-               </p>
-            )}
-            
-            <div className="relative mb-4">
-              <span className="absolute left-6 top-1/2 -translate-y-1/2 text-2xl font-black text-gray-400">$</span>
-              <input 
-                ref={inputRef}
-                type="number" 
-                inputMode="decimal"
-                className="w-full bg-gray-100 border-2 border-gray-200 rounded-xl py-3 text-center text-4xl font-black text-gray-800 focus:outline-none focus:border-blue-500 transition-colors"
-                placeholder="0"
-                value={priceStr}
-                onChange={(e) => setPriceStr(e.target.value)}
-                onKeyDown={handleKeyDown}
-                onFocus={(e) => e.target.select()}
-              />
+          {/* Result Preview */}
+          <div className="bg-blue-50 p-4 rounded-xl flex justify-between items-center mb-6 border border-blue-100 shadow-inner">
+            <div>
+               <p className="text-gray-500 text-sm font-bold">預估重量</p>
+               <p className="text-3xl font-black text-gray-800">{weight} g</p>
             </div>
-            
-            {/* 快捷按鈕 */}
-            <div className="grid grid-cols-5 gap-2 mb-4">
-              {quickAmounts.map(amount => (
-                <button
-                  key={amount}
-                  onClick={() => setPriceStr(amount.toString())}
-                  className="bg-gray-100 hover:bg-gray-200 text-gray-600 font-bold py-2 rounded-lg text-sm transition-colors"
-                >
-                  {amount}
-                </button>
-              ))}
+            <div className="text-right">
+               <p className="text-gray-500 text-sm font-bold">加入金額</p>
+               <p className="text-4xl font-black text-blue-600">NT${price}</p>
             </div>
-
-            <p className="text-center text-gray-400 text-xs font-mono mb-4">
-              約 {estimatedTael.toFixed(1)} 兩 ({estimatedWeight.toFixed(0)}g)
-            </p>
-
-            <button
-              onClick={handleCustomSubmit}
-              // ✅ 修改重點：按鈕啟用條件只看是否 > 0
-              disabled={currentPrice <= 0}
-              className={`w-full py-3 rounded-xl text-lg font-black shadow-lg flex items-center justify-center gap-2 transition-all transform active:scale-95
-                ${currentPrice > 0 
-                  ? 'bg-gray-800 hover:bg-gray-700 text-white' 
-                  : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`
-              }
-            >
-              確認加入
-            </button>
           </div>
 
+          <button 
+            onClick={() => onConfirm(price, weight, tab === 'standard' ? 'standard_box' : 'custom_weight')}
+            disabled={!isValid}
+            className={`w-full py-5 rounded-xl text-2xl font-bold text-white shadow-lg transition-all transform active:scale-95
+              ${isValid 
+                ? 'bg-blue-600 hover:bg-blue-700 shadow-blue-200' 
+                : 'bg-gray-300 cursor-not-allowed shadow-none'}`}
+          >
+            確認加入購物車
+          </button>
         </div>
       </div>
     </div>
