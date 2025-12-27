@@ -7,7 +7,7 @@ import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recha
 interface DashboardModalProps {
   isOpen: boolean;
   onClose: () => void;
-  orders: Order[];
+  orders: Order[]; // 從 App 傳來的本地訂單
   soldOutIds: string[];
   products: Product[];
   onUpdateRemark: (orderId: string, remark: string) => void;
@@ -23,6 +23,7 @@ const CattyInput: React.FC<{
   placeholder?: string;
   colorClass?: string;
 }> = ({ value, onChange, isFixedUnit, placeholder, colorClass }) => {
+  // 如果是固定單位 (盒/份)，直接顯示單一輸入框
   if (isFixedUnit) {
     return (
       <div className="flex items-center justify-center">
@@ -39,17 +40,22 @@ const CattyInput: React.FC<{
     );
   }
 
+  // 如果是秤重單位 (台斤)，拆成 [斤] [兩] 兩個輸入框
+  // 換算邏輯：整數部分是斤，小數部分 * 16 是兩
   const catty = Math.floor(value || 0);
+  // 處理浮點數誤差，例如 0.5 * 16 可能變成 7.99999
   const tael = Math.round(((value || 0) - catty) * 16); 
 
   const handleCattyChange = (newCattyStr: string) => {
     const newCatty = parseFloat(newCattyStr) || 0;
+    // 保持目前的兩不變，重新組合
     const total = newCatty + (tael / 16);
     onChange(total);
   };
 
   const handleTaelChange = (newTaelStr: string) => {
     const newTael = parseFloat(newTaelStr) || 0;
+    // 保持目前的斤不變，重新組合
     const total = catty + (newTael / 16);
     onChange(total);
   };
@@ -171,10 +177,19 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
       
       const salesQty = Math.max(0, record.opening - record.closing - record.waste);
       
-      // 判斷是否為固定單位 (排除需要秤重盤點的盒裝商品)
+      // ✅ 1. 處理新舊 ID 相容 (關鍵修正)
+      // 如果現在算的是「原味小魚乾」，也要去抓早上賣的「舊版小魚乾 (sd_driedfish)」
+      const targetIds = [product.id];
+      if (product.id === 'sd_driedfish_orig') {
+        targetIds.push('sd_driedfish'); 
+      }
+
+      // ✅ 2. 修正邏輯：排除所有「賣盒裝但要秤重盤點」的商品
+      // 加入了 sd_driedfish_orig, sd_driedfish_spicy, sd_pomelo_radish
       const isFixedUnit = (
         product.fixedPrices && 
         product.fixedPrices.length > 0 && 
+        // 排除以下 ID，讓它們強制顯示「斤兩」輸入框
         !['sd_driedfish_orig', 'sd_driedfish_spicy', 'sd_pomelo_radish'].includes(product.id)
       ) || product.id === 'ss_combo_200';
       
@@ -185,19 +200,21 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
       let estRevenue = 0;
       estRevenue = salesQty * refPrice;
 
+      // ✅ 3. 計算實際營收 (使用 targetIds 同時抓新舊訂單)
       const actualRevenue = ordersToUse.reduce((sum, order) => {
         if (order.paymentMethod === 'WASTE') return sum;
 
         const productTotal = order.items
-          .filter(item => item.productId === product.id)
+          .filter(item => targetIds.includes(item.productId)) // 使用 targetIds 檢查
           .reduce((itemSum, item) => itemSum + item.price, 0);
         return sum + productTotal;
       }, 0);
 
       const diff = actualRevenue - Math.round(estRevenue);
 
+      // ✅ 4. 計算系統銷量 (使用 targetIds)
       const systemSoldGrams = ordersToUse.reduce((sum, order) => {
-         const items = order.items.filter(item => item.productId === product.id);
+         const items = order.items.filter(item => targetIds.includes(item.productId)); // 使用 targetIds 檢查
          return sum + items.reduce((iSum, i) => {
             if (i.weightGrams) return iSum + i.weightGrams;
             
@@ -209,7 +226,7 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
       }, 0);
       
       const systemSoldUnit = isFixedUnit 
-        ? ordersToUse.reduce((sum, order) => sum + order.items.filter(i => i.productId === product.id).reduce((q, i) => q + i.quantity, 0), 0)
+        ? ordersToUse.reduce((sum, order) => sum + order.items.filter(i => targetIds.includes(i.productId)).reduce((q, i) => q + i.quantity, 0), 0)
         : Number((systemSoldGrams / 600).toFixed(2));
 
       return {
@@ -304,7 +321,6 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
 
       // 3. 結帳成功後，清除暫存的盤點資料
       localStorage.removeItem('pos_inventory_temp');
-      // 將今日的期末庫存，設為明日的期初 (這裡為了簡單，先清空，讓使用者明天自己秤重最準)
       setInventoryData({});
 
       alert(`✅ ${todayStr} 結帳成功！\n資料已同步，本日訂單將自動清空。`);
