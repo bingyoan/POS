@@ -9,7 +9,7 @@ import { ComboModal } from './components/ComboModal';
 import { PinModal } from './components/PinModal'; 
 import { OrderHistoryModal } from './components/OrderHistoryModal'; 
 import { HeldOrdersModal } from './components/HeldOrdersModal';
-import { Settings, ChefHat, LayoutGrid, ClipboardList, RefreshCw } from 'lucide-react'; // ✅ 新增 RefreshCw icon
+import { Settings, ChefHat, LayoutGrid, ClipboardList, RefreshCw } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import { supabase } from './lib/supabase';
 
@@ -52,7 +52,7 @@ const App: React.FC = () => {
     localStorage.setItem('pos_held_orders', JSON.stringify(heldOrders));
   }, [heldOrders]);
 
-  // ✅ 新增：開機自動從雲端抓取今日訂單 (解決重新整理後資料消失的問題)
+  // 開機自動從雲端抓取今日訂單
   useEffect(() => {
     const fetchTodayOrders = async () => {
       const todayStr = new Date().toISOString().split('T')[0];
@@ -66,7 +66,6 @@ const App: React.FC = () => {
         if (error) throw error;
 
         if (data) {
-          // 將雲端資料轉換回本地 Order 格式
           const loadedOrders: Order[] = data.map(row => ({
             id: row.id,
             timestamp: new Date(row.created_at).getTime(),
@@ -79,7 +78,6 @@ const App: React.FC = () => {
             remarks: row.remarks
           }));
           
-          // 更新本地狀態 (如果雲端有資料，以雲端為準)
           if (loadedOrders.length > 0) {
             setOrders(loadedOrders);
           }
@@ -112,7 +110,6 @@ const App: React.FC = () => {
   const handleAddToCart = (price: number, weight: number, type: 'standard_box' | 'custom_weight') => {
     if (!selectedProduct) return;
     
-    // 如果 costPer600g 有值，按重量比例算成本；否則設為 0 (或需另外定義)
     const unitCost = selectedProduct.costPer600g > 0 
       ? (selectedProduct.costPer600g / 600) * weight 
       : 0;
@@ -231,12 +228,22 @@ const App: React.FC = () => {
     }
   };
 
-  const handleClearAllOrders = () => {
+  // ✅ 修改：強制清空 (包含刪除雲端資料)
+  const handleClearAllOrders = async () => {
+    if (!window.confirm('⚠️ 警告：確定要「強制清空」所有訂單嗎？\n\n這通常只在「已經日結過」但平板還有資料時使用。\n這會同時刪除雲端的今日資料！')) return;
+
     setOrders([]);
     localStorage.removeItem('pos_orders_today');
+
+    // 這裡加上刪除雲端資料的邏輯，防止重新整理後資料又跑回來
+    const todayStr = new Date().toISOString().split('T')[0];
+    try {
+      await supabase.from('orders').delete().eq('date', todayStr);
+    } catch (e) {
+      console.error('雲端刪除失敗', e);
+    }
   };
 
-  // ✅ 新增：處理寄放訂單
   const handleHoldOrder = (customer: Customer, isPaid: boolean) => {
     if (cart.length === 0) return;
     
@@ -358,12 +365,12 @@ const App: React.FC = () => {
       <div className="w-[30%] h-full bg-white relative shadow-2xl z-20">
         <CartSidebar 
           cart={cart}
-          heldOrderCount={heldOrders.length} // 傳入寄放訂單數量
+          heldOrderCount={heldOrders.length}
           onRemoveItem={(id) => setCart(cart.filter(i => i.id !== id))}
           onAddModifier={handleAddModifier}
           onCheckout={handleCheckout}
-          onHoldOrder={handleHoldOrder} // 傳入處理函式
-          onResumeOrder={() => setIsHeldOrdersModalOpen(true)} // 打開寄放列表
+          onHoldOrder={handleHoldOrder}
+          onResumeOrder={() => setIsHeldOrdersModalOpen(true)}
           onClearCart={() => setCart([])}
         />
       </div>
@@ -398,6 +405,7 @@ const App: React.FC = () => {
         onClose={() => setIsOrderHistoryOpen(false)}
         orders={orders}
         onDeleteOrder={handleDeleteOrder}
+        onClearAllOrders={handleClearAllOrders} // ✅ 記得把函式傳進去
       />
 
       {/* 寄放訂單列表視窗 */}
