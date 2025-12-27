@@ -32,9 +32,9 @@ export const PRODUCTS: Product[] = [
     id: 'sd_pomelo_radish', 
     name: '柚香蘿蔔', 
     category: Category.SMALL_DISH, 
-    // 成本 145/斤
     costPer600g: 145, 
-    defaultSellingPricePer600g: 0, // 不秤重賣，只賣盒
+    // ✅ 修正這裡：設定每斤售價 $300，這樣系統才知道一盒 $100 等於多少重量
+    defaultSellingPricePer600g: 300, 
     fixedPrices: [
       { label: '1 盒', price: 100 }
     ]
