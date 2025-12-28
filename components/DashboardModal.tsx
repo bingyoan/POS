@@ -15,70 +15,26 @@ interface DashboardModalProps {
   onClearAllOrders: () => void;
 }
 
-// --- 台斤/兩 專用輸入元件 ---
-const CattyInput: React.FC<{
+// ✅ 修改：通用輸入元件 (根據是否為固定單位，顯示 "份" 或 "克")
+const InventoryInput: React.FC<{
   value: number;
   onChange: (val: number) => void;
   isFixedUnit: boolean;
-  placeholder?: string;
   colorClass?: string;
-}> = ({ value, onChange, isFixedUnit, placeholder, colorClass }) => {
-  if (isFixedUnit) {
-    return (
-      <div className="flex items-center justify-center">
-        <input 
-          type="number" 
-          className={`w-16 bg-gray-800 border border-gray-600 rounded p-1 text-center focus:outline-none font-mono ${colorClass}`}
-          value={value || ''}
-          placeholder={placeholder || "0"}
-          onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
-          onFocus={(e) => e.target.select()}
-        />
-        <span className="ml-1 text-gray-500 text-xs">份</span>
-      </div>
-    );
-  }
-
-  const catty = Math.floor(value || 0);
-  const tael = Math.round(((value || 0) - catty) * 16); 
-
-  const handleCattyChange = (newCattyStr: string) => {
-    const newCatty = parseFloat(newCattyStr) || 0;
-    const total = newCatty + (tael / 16);
-    onChange(total);
-  };
-
-  const handleTaelChange = (newTaelStr: string) => {
-    const newTael = parseFloat(newTaelStr) || 0;
-    const total = catty + (newTael / 16);
-    onChange(total);
-  };
-
+}> = ({ value, onChange, isFixedUnit, colorClass }) => {
   return (
-    <div className="flex items-center justify-center gap-1">
-      <div className="relative">
-        <input 
-          type="number" 
-          className={`w-12 bg-gray-800 border border-gray-600 rounded p-1 text-center focus:outline-none font-mono ${colorClass}`}
-          value={catty || ''}
-          placeholder="0"
-          onChange={(e) => handleCattyChange(e.target.value)}
-          onFocus={(e) => e.target.select()}
-        />
-        <span className="absolute -top-3 left-0 w-full text-center text-[9px] text-gray-500">斤</span>
-      </div>
-      <span className="text-gray-500">:</span>
-      <div className="relative">
-        <input 
-          type="number" 
-          className={`w-12 bg-gray-800 border border-gray-600 rounded p-1 text-center focus:outline-none font-mono ${colorClass}`}
-          value={tael || ''}
-          placeholder="0"
-          onChange={(e) => handleTaelChange(e.target.value)}
-          onFocus={(e) => e.target.select()}
-        />
-        <span className="absolute -top-3 left-0 w-full text-center text-[9px] text-gray-500">兩</span>
-      </div>
+    <div className="flex items-center justify-center relative">
+      <input 
+        type="number" 
+        className={`w-20 bg-gray-800 border border-gray-600 rounded p-1 text-center focus:outline-none font-mono ${colorClass}`}
+        value={value === 0 ? '' : value} // 如果是0顯示空白，方便輸入
+        placeholder="0"
+        onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
+        onFocus={(e) => e.target.select()}
+      />
+      <span className="absolute right-[-20px] text-gray-500 text-xs font-bold w-4">
+        {isFixedUnit ? '份' : 'g'}
+      </span>
     </div>
   );
 };
@@ -167,6 +123,9 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
     return products.map(product => {
       const record = inventoryData[product.id] || { opening: 0, closing: 0, waste: 0 };
       
+      // 銷售數量 (期初 - 期末 - 損耗)
+      // 如果是固定單位：單位是「份」
+      // 如果是秤重單位：單位是「克」
       const salesQty = Math.max(0, record.opening - record.closing - record.waste);
       
       const targetIds = [product.id];
@@ -174,19 +133,28 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
         targetIds.push('sd_driedfish'); 
       }
 
+      // 判斷是否為固定單位 (盒裝小菜)
       const isFixedUnit = (
         product.fixedPrices && 
         product.fixedPrices.length > 0 && 
         !['sd_driedfish_orig', 'sd_driedfish_spicy', 'sd_pomelo_radish'].includes(product.id)
       ) || product.id === 'ss_combo_200';
       
+      // 參考價格 (如果是秤重，這裡是每600克的價格)
       const refPrice = isFixedUnit 
         ? (product.fixedPrices ? product.fixedPrices[0].price : 200) 
         : product.defaultSellingPricePer600g;
 
+      // ✅ 修改計算邏輯：使用公克計算
       let estRevenue = 0;
-      estRevenue = salesQty * refPrice;
+      if (isFixedUnit) {
+        estRevenue = salesQty * refPrice; // 份數 * 單價
+      } else {
+        // (公克數 / 600) * 每斤單價
+        estRevenue = (salesQty / 600) * refPrice;
+      }
 
+      // 實際營收
       const actualRevenue = ordersToUse.reduce((sum, order) => {
         if (order.paymentMethod === 'WASTE') return sum;
 
@@ -198,11 +166,12 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
 
       const diff = actualRevenue - Math.round(estRevenue);
 
+      // 系統紀錄的銷售量
       const systemSoldGrams = ordersToUse.reduce((sum, order) => {
          const items = order.items.filter(item => targetIds.includes(item.productId));
          return sum + items.reduce((iSum, i) => {
             if (i.weightGrams) return iSum + i.weightGrams;
-            
+            // 如果沒有紀錄重量，用價格反推
             if (i.price && product.defaultSellingPricePer600g > 0) {
               return iSum + (i.price / product.defaultSellingPricePer600g) * 600;
             }
@@ -210,9 +179,10 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
          }, 0);
       }, 0);
       
+      // ✅ 顯示邏輯：如果是秤重商品，顯示公克 (g)，不再換算成斤
       const systemSoldUnit = isFixedUnit 
         ? ordersToUse.reduce((sum, order) => sum + order.items.filter(i => targetIds.includes(i.productId)).reduce((q, i) => q + i.quantity, 0), 0)
-        : Number((systemSoldGrams / 600).toFixed(2));
+        : Number(systemSoldGrams.toFixed(0)); // 顯示整數公克
 
       return {
         product,
@@ -238,7 +208,6 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
       .reduce((sum, o) => sum + o.totalCost, 0);
   }, [ordersToUse]);
 
-  // ✅ 新增：歷史報表的商品統計
   const reportItemSummary = useMemo(() => {
     const summary: Record<string, number> = {};
     historyRecords.forEach(record => {
@@ -248,7 +217,6 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
          });
       }
     });
-    // 排序：數量多的在前面
     return Object.entries(summary).sort((a, b) => b[1] - a[1]);
   }, [historyRecords]);
 
@@ -294,7 +262,6 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
     
     setIsClosingDay(true);
     
-    // 計算財務數據
     const totalSalesCash = ordersToUse.filter(o => o.paymentMethod === 'CASH').reduce((sum, o) => sum + o.totalPrice, 0);
     const totalSalesLine = ordersToUse.filter(o => o.paymentMethod === 'LINE_PAY').reduce((sum, o) => sum + o.totalPrice, 0);
     const totalRevenue = totalSalesCash + totalSalesLine;
@@ -302,10 +269,8 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
     const totalProfit = totalRevenue - totalCost;
     const todayStr = new Date().toISOString().split('T')[0];
 
-    // ✅ 新增：計算今日商品銷售統計 (Before deleting orders)
     const dailySalesSummary: Record<string, number> = {};
     ordersToUse.forEach(order => {
-      // 排除損耗單，只統計實際銷售
       if (order.paymentMethod !== 'WASTE') {
         order.items.forEach(item => {
           dailySalesSummary[item.productName] = (dailySalesSummary[item.productName] || 0) + item.quantity;
@@ -321,18 +286,16 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
       order_count: ordersToUse.length,
       inventory_variance: totalInventoryDiff !== 0 ? totalInventoryDiff : -totalWasteCost, 
       note: `日結 - 現金:${totalSalesCash}, LINE:${totalSalesLine}, 系統損耗:${totalWasteCost}`,
-      sales_summary: dailySalesSummary // ✅ 存入資料庫
+      sales_summary: dailySalesSummary
     };
 
     try {
-      // 1. 存入歷史報表
       const { error: upsertError } = await supabase
         .from('daily_closings')
         .upsert(record, { onConflict: 'date' });
 
       if (upsertError) throw upsertError;
 
-      // 2. 從雲端刪除本日訂單
       const { error: deleteError } = await supabase
         .from('orders')
         .delete()
@@ -340,7 +303,6 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
 
       if (deleteError) throw deleteError;
 
-      // 3. 自動結轉邏輯
       const nextDayInventory: Record<string, InventoryRecord> = {};
       Object.keys(inventoryData).forEach(productId => {
         const currentRecord = inventoryData[productId];
@@ -683,9 +645,10 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
                   <div className="text-sm text-blue-200">
                      <p className="font-bold">盤點說明</p>
                      <p className="opacity-70">
-                       請輸入
-                       <span className="text-yellow-400 font-bold mx-1">台斤 / 兩</span>
-                       (固定單位輸入個數)。系統將自動換算。
+                       秤重商品請輸入
+                       <span className="text-yellow-400 font-bold mx-1">公克 (g)</span>，
+                       盒裝商品請輸入
+                       <span className="text-yellow-400 font-bold mx-1">份數</span>。
                      </p>
                   </div>
                   <button 
@@ -716,10 +679,10 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
                            <tr key={row.product.id} className="hover:bg-gray-800/30 transition-colors">
                               <td className="p-4 font-bold text-gray-200">
                                  {row.product.name}
-                                 <div className="text-[10px] text-gray-500 font-normal">{row.isFixedUnit ? '(單位: 份)' : '(單位: 台斤)'}</div>
+                                 <div className="text-[10px] text-gray-500 font-normal">{row.isFixedUnit ? '(單位: 份)' : '(單位: 公克)'}</div>
                               </td>
                               <td className="p-2 text-center">
-                                 <CattyInput 
+                                 <InventoryInput 
                                     value={row.record.opening || 0}
                                     onChange={(val) => handleInventoryChange(row.product.id, 'opening', val)}
                                     isFixedUnit={!!row.isFixedUnit}
@@ -727,7 +690,7 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
                                  />
                               </td>
                               <td className="p-2 text-center">
-                                 <CattyInput 
+                                 <InventoryInput 
                                     value={row.record.closing || 0}
                                     onChange={(val) => handleInventoryChange(row.product.id, 'closing', val)}
                                     isFixedUnit={!!row.isFixedUnit}
@@ -735,7 +698,7 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
                                  />
                               </td>
                               <td className="p-2 text-center">
-                                 <CattyInput 
+                                 <InventoryInput 
                                     value={row.record.waste || 0}
                                     onChange={(val) => handleInventoryChange(row.product.id, 'waste', val)}
                                     isFixedUnit={!!row.isFixedUnit}
@@ -743,10 +706,10 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
                                  />
                               </td>
                               <td className="p-4 text-right font-mono font-bold text-blue-300 bg-gray-800/20">
-                                 {row.salesQty.toFixed(2)} {row.isFixedUnit ? '' : '斤'}
+                                 {row.salesQty.toFixed(0)} {row.isFixedUnit ? '份' : 'g'}
                               </td>
                               <td className="p-4 text-right font-mono text-gray-500 text-xs">
-                                 {row.systemSoldUnit} {row.isFixedUnit ? '' : '斤'}
+                                 {row.systemSoldUnit} {row.isFixedUnit ? '份' : 'g'}
                               </td>
                               <td className="p-4 text-right font-mono text-gray-400">
                                  ${row.estRevenue.toLocaleString()}
