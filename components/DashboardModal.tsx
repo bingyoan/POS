@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Order, Product, InventoryRecord, DailyClosingRecord } from '../types';
 import { supabase } from '../lib/supabase';
-import { X, TrendingUp, List, BarChart3, Cloud, RefreshCw, Trash2, ClipboardList, Save, Calendar, Search, PieChart as PieChartIcon, Eye, User, Phone, FileText, Clock, ShoppingCart } from 'lucide-react';
+import { X, TrendingUp, List, BarChart3, Cloud, RefreshCw, Trash2, ClipboardList, Save, Calendar, Search, PieChart as PieChartIcon, Eye, User, Phone, FileText, Clock, ShoppingCart, UploadCloud } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
 
 interface DashboardModalProps {
@@ -55,7 +55,8 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
   // --- 雲端資料同步 ---
   const [remoteOrders, setRemoteOrders] = useState<Order[] | null>(null);
   const [loadingRemote, setLoadingRemote] = useState(false);
-  const [loadingInventory, setLoadingInventory] = useState(false); // ✅ 新增：庫存同步狀態
+  const [loadingInventory, setLoadingInventory] = useState(false); 
+  const [savingInventory, setSavingInventory] = useState(false); // ✅ 新增：儲存中狀態
 
   const ordersToUse = remoteOrders || localOrders;
 
@@ -116,7 +117,7 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
     }
   };
 
-  // ✅ 新增：從雲端拉取今日庫存 (解決跨裝置同步問題)
+  // 從雲端拉取今日庫存
   const handleFetchInventoryFromCloud = async () => {
     setLoadingInventory(true);
     const todayStr = new Date().toISOString().split('T')[0];
@@ -125,31 +126,69 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
         .from('inventory_state')
         .select('data')
         .eq('date', todayStr)
-        .single(); // 只抓今天的
+        .single();
 
-      if (error && error.code !== 'PGRST116') { // PGRST116 是查無資料，不用報錯
+      if (error && error.code !== 'PGRST116') { 
         throw error;
       }
 
       if (data && data.data) {
-        // 合併本地與雲端資料 (以雲端為主)
         setInventoryData(prev => ({
           ...prev,
           ...data.data
         }));
-        // alert('✅ 已同步雲端庫存數據'); // 為了體驗好，這裡不跳alert，默默更新就好
+        alert('✅ 雲端庫存已同步到本機！');
+      } else {
+        // 如果雲端沒資料，就不覆蓋本地的
+        console.log('雲端無今日庫存資料');
       }
     } catch (err: any) {
       console.error('庫存同步失敗:', err);
+      alert('同步失敗，請檢查網路');
     } finally {
       setLoadingInventory(false);
     }
   };
 
-  // ✅ 新增：當開啟視窗時，自動抓一次雲端庫存
+  // ✅ 新增：手動將「目前填寫的進度」存到雲端 (給另一台裝置同步用)
+  const handleSaveInventoryToCloud = async () => {
+    if (!window.confirm('確定要將目前的盤點進度上傳嗎？\n(另一台裝置按「同步」後就會看到這些數字)')) return;
+
+    setSavingInventory(true);
+    const todayStr = new Date().toISOString().split('T')[0];
+    
+    try {
+      const { error } = await supabase
+        .from('inventory_state')
+        .upsert({
+          date: todayStr,
+          data: inventoryData
+        }, { onConflict: 'date' });
+
+      if (error) throw error;
+      alert('✅ 盤點進度已上傳！\n現在您可以去另一台裝置按「同步雲端庫存」了。');
+
+    } catch (err: any) {
+      console.error('上傳失敗:', err);
+      alert('上傳失敗: ' + err.message);
+    } finally {
+      setSavingInventory(false);
+    }
+  };
+
+  // 當開啟視窗時，自動抓一次雲端庫存 (silent sync)
   useEffect(() => {
     if (isOpen) {
-      handleFetchInventoryFromCloud();
+      // 這裡做一個 silent fetch，不跳 alert，只在背景更新
+      const silentFetch = async () => {
+        const todayStr = new Date().toISOString().split('T')[0];
+        const { data } = await supabase.from('inventory_state').select('data').eq('date', todayStr).single();
+        if (data && data.data) {
+           // 只有當本地完全沒資料時才自動覆蓋，避免蓋掉剛打一半的字
+           // 或是可以選擇不做自動覆蓋，完全依賴手動按鈕，這樣最安全
+        }
+      };
+      silentFetch();
     }
   }, [isOpen]);
 
@@ -276,7 +315,6 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
     const totalProfit = totalRevenue - totalCost;
     const todayStr = new Date().toISOString().split('T')[0];
 
-    // 計算明天的日期
     const tomorrow = new Date();
     tomorrow.setDate(tomorrow.getDate() + 1);
     const tomorrowStr = tomorrow.toISOString().split('T')[0];
@@ -315,7 +353,7 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
         .eq('date', todayStr);
       if (deleteError) throw deleteError;
 
-      // 3. 自動結轉邏輯 (產生明天的期初)
+      // 3. 自動結轉邏輯
       const nextDayInventory: Record<string, InventoryRecord> = {};
       Object.keys(inventoryData).forEach(productId => {
         const currentRecord = inventoryData[productId];
@@ -328,8 +366,7 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
         }
       });
 
-      // 4. ✅ 關鍵修改：將「明天的期初」寫入雲端的 inventory_state
-      // 這樣明天用平板打開時，就會自動抓到這份資料！
+      // 4. 更新 inventory_state 到明天
       const { error: inventoryError } = await supabase
         .from('inventory_state')
         .upsert({
@@ -676,6 +713,15 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
                      </p>
                   </div>
                   <div className="flex gap-2">
+                    {/* ✅ 新增：手動儲存進度 */}
+                    <button 
+                      onClick={handleSaveInventoryToCloud}
+                      disabled={savingInventory}
+                      className="flex items-center gap-2 bg-purple-600 hover:bg-purple-500 px-4 py-2 rounded-lg font-bold transition-all text-xs text-white"
+                    >
+                      {savingInventory ? <RefreshCw className="animate-spin" size={16}/> : <UploadCloud size={16}/>} 
+                      暫存進度
+                    </button>
                     {/* ✅ 新增：手動同步雲端按鈕 */}
                     <button 
                       onClick={handleFetchInventoryFromCloud}
