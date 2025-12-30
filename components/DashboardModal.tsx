@@ -56,7 +56,7 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
   const [remoteOrders, setRemoteOrders] = useState<Order[] | null>(null);
   const [loadingRemote, setLoadingRemote] = useState(false);
   const [loadingInventory, setLoadingInventory] = useState(false); 
-  const [savingInventory, setSavingInventory] = useState(false); // ✅ 新增：儲存中狀態
+  const [savingInventory, setSavingInventory] = useState(false);
 
   const ordersToUse = remoteOrders || localOrders;
 
@@ -117,7 +117,6 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
     }
   };
 
-  // 從雲端拉取今日庫存
   const handleFetchInventoryFromCloud = async () => {
     setLoadingInventory(true);
     const todayStr = new Date().toISOString().split('T')[0];
@@ -138,9 +137,6 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
           ...data.data
         }));
         alert('✅ 雲端庫存已同步到本機！');
-      } else {
-        // 如果雲端沒資料，就不覆蓋本地的
-        console.log('雲端無今日庫存資料');
       }
     } catch (err: any) {
       console.error('庫存同步失敗:', err);
@@ -150,7 +146,6 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
     }
   };
 
-  // ✅ 新增：手動將「目前填寫的進度」存到雲端 (給另一台裝置同步用)
   const handleSaveInventoryToCloud = async () => {
     if (!window.confirm('確定要將目前的盤點進度上傳嗎？\n(另一台裝置按「同步」後就會看到這些數字)')) return;
 
@@ -176,16 +171,13 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
     }
   };
 
-  // 當開啟視窗時，自動抓一次雲端庫存 (silent sync)
   useEffect(() => {
     if (isOpen) {
-      // 這裡做一個 silent fetch，不跳 alert，只在背景更新
       const silentFetch = async () => {
         const todayStr = new Date().toISOString().split('T')[0];
         const { data } = await supabase.from('inventory_state').select('data').eq('date', todayStr).single();
         if (data && data.data) {
-           // 只有當本地完全沒資料時才自動覆蓋，避免蓋掉剛打一半的字
-           // 或是可以選擇不做自動覆蓋，完全依賴手動按鈕，這樣最安全
+           // Silent sync logic
         }
       };
       silentFetch();
@@ -193,12 +185,55 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
   }, [isOpen]);
 
   // --- Calculations ---
+
+  // 計算「系統報廢量」 (從前台訂單自動統計)
+  const systemWasteMap = useMemo(() => {
+    const map: Record<string, number> = {};
+    ordersToUse.forEach(order => {
+      // 只統計報廢單 (WASTE)
+      if (order.paymentMethod === 'WASTE') {
+        order.items.forEach(item => {
+          const pid = item.productId;
+          const product = products.find(p => p.id === pid);
+          if (!product) return;
+
+          const isFixedUnit = (
+            product.fixedPrices && 
+            product.fixedPrices.length > 0 && 
+            !['sd_driedfish_orig', 'sd_driedfish_spicy', 'sd_pomelo_radish'].includes(product.id)
+          ) || product.id === 'ss_combo_200';
+
+          if (isFixedUnit) {
+            // 盒裝：加總數量
+            map[pid] = (map[pid] || 0) + item.quantity;
+          } else {
+            // 秤重：加總重量 (若無重量紀錄則用價格推算)
+            let w = item.weightGrams || 0;
+            if (w === 0 && item.price > 0 && product.defaultSellingPricePer600g > 0) {
+               w = (item.price / product.defaultSellingPricePer600g) * 600;
+            }
+            map[pid] = (map[pid] || 0) + w;
+          }
+        });
+      }
+    });
+    return map;
+  }, [ordersToUse, products]);
+
   const inventoryRows = useMemo(() => {
     if (!isOpen) return [];
 
     return products.map(product => {
       const record = inventoryData[product.id] || { opening: 0, closing: 0, waste: 0 };
-      const salesQty = Math.max(0, record.opening - record.closing - record.waste);
+      
+      // ✅ 系統自動算出的報廢量
+      const sysWaste = systemWasteMap[product.id] || 0;
+      
+      // ✅ 總損耗 = 手動輸入的偏差值 + 系統報廢量
+      const totalWaste = record.waste + sysWaste;
+
+      // 銷售數量 = 期初 - 期末 - 總損耗
+      const salesQty = Math.max(0, record.opening - record.closing - totalWaste);
       
       const targetIds = [product.id];
       if (product.id === 'sd_driedfish_orig') targetIds.push('sd_driedfish'); 
@@ -247,10 +282,11 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
 
       return {
         product, record, isFixedUnit, refPrice, salesQty, systemSoldUnit, 
-        estRevenue: Math.round(estRevenue), actualRevenue, diff
+        estRevenue: Math.round(estRevenue), actualRevenue, diff,
+        sysWaste, totalWaste
       };
     });
-  }, [products, inventoryData, ordersToUse, isOpen]);
+  }, [products, inventoryData, ordersToUse, isOpen, systemWasteMap]);
 
   const totalInventoryDiff = useMemo(() => inventoryRows.reduce((sum, row) => sum + row.diff, 0), [inventoryRows]);
   const totalWasteCost = useMemo(() => ordersToUse.filter(o => o.paymentMethod === 'WASTE').reduce((sum, o) => sum + o.totalCost, 0), [ordersToUse]);
@@ -359,14 +395,13 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
         const currentRecord = inventoryData[productId];
         if (currentRecord && currentRecord.closing > 0) {
           nextDayInventory[productId] = {
-            opening: currentRecord.closing, // 今天的期末 = 明天的期初
+            opening: currentRecord.closing, 
             closing: 0,
             waste: 0 
           };
         }
       });
 
-      // 4. 更新 inventory_state 到明天
       const { error: inventoryError } = await supabase
         .from('inventory_state')
         .upsert({
@@ -378,7 +413,7 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
 
       setInventoryData(nextDayInventory);
 
-      alert(`✅ ${todayStr} 結帳成功！\n\n1. 營收報表已儲存。\n2. 訂單已清除。\n3. 明日期初庫存已同步至雲端 (平板明天打開就有資料了)。`);
+      alert(`✅ ${todayStr} 結帳成功！\n\n1. 營收報表已儲存。\n2. 訂單已清除。\n3. 明日期初庫存已同步至雲端。`);
       onClearAllOrders();
       onClose();
 
@@ -497,7 +532,7 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
                   </div>
                 </div>
 
-                <div className="bg-gray-800/50 rounded-2xl p-6 border border-gray-700 flex flex-col h-80">
+                <div className="bg-gray-800/50 rounded-2xl p-6 border border-gray-700 flex-1 h-[600px] flex flex-col">
                    <h3 className="text-gray-400 font-bold mb-4 uppercase text-xs tracking-widest flex items-center gap-2">
                       <PieChartIcon size={14} className="text-purple-400" /> 支付方式佔比
                    </h3>
@@ -713,7 +748,7 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
                      </p>
                   </div>
                   <div className="flex gap-2">
-                    {/* ✅ 新增：手動儲存進度 */}
+                    {/* 手動儲存進度 */}
                     <button 
                       onClick={handleSaveInventoryToCloud}
                       disabled={savingInventory}
@@ -722,7 +757,7 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
                       {savingInventory ? <RefreshCw className="animate-spin" size={16}/> : <UploadCloud size={16}/>} 
                       暫存進度
                     </button>
-                    {/* ✅ 新增：手動同步雲端按鈕 */}
+                    {/* 手動同步雲端按鈕 */}
                     <button 
                       onClick={handleFetchInventoryFromCloud}
                       disabled={loadingInventory}
@@ -747,7 +782,7 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
                            <th className="p-4 border-b border-gray-700 min-w-[140px]">商品名稱</th>
                            <th className="p-4 border-b border-gray-700 text-center w-24 text-yellow-500">期初</th>
                            <th className="p-4 border-b border-gray-700 text-center w-24 text-yellow-500">期末</th>
-                           <th className="p-4 border-b border-gray-700 text-center w-24 text-red-400">損耗</th>
+                           <th className="p-4 border-b border-gray-700 text-center w-24 text-red-400">總損耗 (前台+手動)</th>
                            <th className="p-4 border-b border-gray-700 text-right bg-gray-800/80 text-blue-300">盤點量</th>
                            <th className="p-4 border-b border-gray-700 text-right text-gray-500">系統銷量</th>
                            <th className="p-4 border-b border-gray-700 text-right">預估營收</th>
@@ -780,8 +815,10 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
                               </td>
                               <td className="p-2 text-center">
                                  <InventoryInput 
-                                    value={row.record.waste || 0}
-                                    onChange={(val) => handleInventoryChange(row.product.id, 'waste', val)}
+                                    // 顯示：總損耗 (手動 + 系統)
+                                    value={row.totalWaste}
+                                    // 修改：輸入的總數 - 系統損耗 = 手動損耗
+                                    onChange={(val) => handleInventoryChange(row.product.id, 'waste', val - row.sysWaste)}
                                     isFixedUnit={!!row.isFixedUnit}
                                     colorClass="focus:border-red-500 text-white"
                                  />
