@@ -177,7 +177,7 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
         const todayStr = new Date().toISOString().split('T')[0];
         const { data } = await supabase.from('inventory_state').select('data').eq('date', todayStr).single();
         if (data && data.data) {
-           // Silent sync logic
+           // Silent sync
         }
       };
       silentFetch();
@@ -186,11 +186,9 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
 
   // --- Calculations ---
 
-  // 計算「系統報廢量」 (從前台訂單自動統計)
   const systemWasteMap = useMemo(() => {
     const map: Record<string, number> = {};
     ordersToUse.forEach(order => {
-      // 只統計報廢單 (WASTE)
       if (order.paymentMethod === 'WASTE') {
         order.items.forEach(item => {
           const pid = item.productId;
@@ -204,10 +202,8 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
           ) || product.id === 'ss_combo_200';
 
           if (isFixedUnit) {
-            // 盒裝：加總數量
             map[pid] = (map[pid] || 0) + item.quantity;
           } else {
-            // 秤重：加總重量 (若無重量紀錄則用價格推算)
             let w = item.weightGrams || 0;
             if (w === 0 && item.price > 0 && product.defaultSellingPricePer600g > 0) {
                w = (item.price / product.defaultSellingPricePer600g) * 600;
@@ -224,16 +220,16 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
     if (!isOpen) return [];
 
     return products.map(product => {
-      const record = inventoryData[product.id] || { opening: 0, closing: 0, waste: 0 };
+      // ✅ 預設值加上 restock: 0
+      const record = inventoryData[product.id] || { opening: 0, restock: 0, closing: 0, waste: 0 };
       
-      // ✅ 系統自動算出的報廢量
       const sysWaste = systemWasteMap[product.id] || 0;
-      
-      // ✅ 總損耗 = 手動輸入的偏差值 + 系統報廢量
       const totalWaste = record.waste + sysWaste;
 
-      // 銷售數量 = 期初 - 期末 - 總損耗
-      const salesQty = Math.max(0, record.opening - record.closing - totalWaste);
+      // ✅ 修改公式：(期初 + 進貨) - 期末 - 損耗
+      // 這樣「期初」就是昨天的剩貨，「進貨」就是今天新煮的
+      const availableStock = (record.opening || 0) + (record.restock || 0);
+      const salesQty = Math.max(0, availableStock - record.closing - totalWaste);
       
       const targetIds = [product.id];
       if (product.id === 'sd_driedfish_orig') targetIds.push('sd_driedfish'); 
@@ -308,7 +304,7 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
     setInventoryData(prev => ({
       ...prev,
       [productId]: {
-        ...(prev[productId] || { opening: 0, closing: 0, waste: 0 }),
+        ...(prev[productId] || { opening: 0, restock: 0, closing: 0, waste: 0 }),
         [field]: value
       }
     }));
@@ -396,6 +392,7 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
         if (currentRecord && currentRecord.closing > 0) {
           nextDayInventory[productId] = {
             opening: currentRecord.closing, 
+            restock: 0, // ✅ 明天的進貨歸零 (因為還沒煮)
             closing: 0,
             waste: 0 
           };
@@ -532,7 +529,7 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
                   </div>
                 </div>
 
-                <div className="bg-gray-800/50 rounded-2xl p-6 border border-gray-700 flex-1 h-[600px] flex flex-col">
+                <div className="bg-gray-800/50 rounded-2xl p-6 border border-gray-700 flex flex-col h-80">
                    <h3 className="text-gray-400 font-bold mb-4 uppercase text-xs tracking-widest flex items-center gap-2">
                       <PieChartIcon size={14} className="text-purple-400" /> 支付方式佔比
                    </h3>
@@ -781,8 +778,10 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
                         <tr>
                            <th className="p-4 border-b border-gray-700 min-w-[140px]">商品名稱</th>
                            <th className="p-4 border-b border-gray-700 text-center w-24 text-yellow-500">期初</th>
+                           {/* ✅ 新增：進貨欄位 */}
+                           <th className="p-4 border-b border-gray-700 text-center w-24 text-blue-400">進貨</th>
                            <th className="p-4 border-b border-gray-700 text-center w-24 text-yellow-500">期末</th>
-                           <th className="p-4 border-b border-gray-700 text-center w-24 text-red-400">總損耗 (前台+手動)</th>
+                           <th className="p-4 border-b border-gray-700 text-center w-28 text-red-400">總損耗 (前台+手動)</th>
                            <th className="p-4 border-b border-gray-700 text-right bg-gray-800/80 text-blue-300">盤點量</th>
                            <th className="p-4 border-b border-gray-700 text-right text-gray-500">系統銷量</th>
                            <th className="p-4 border-b border-gray-700 text-right">預估營收</th>
@@ -805,6 +804,15 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
                                     colorClass="focus:border-yellow-500 text-white"
                                  />
                               </td>
+                              {/* ✅ 新增：進貨輸入框 */}
+                              <td className="p-2 text-center">
+                                 <InventoryInput 
+                                    value={row.record.restock || 0}
+                                    onChange={(val) => handleInventoryChange(row.product.id, 'restock', val)}
+                                    isFixedUnit={!!row.isFixedUnit}
+                                    colorClass="focus:border-blue-400 text-white"
+                                 />
+                              </td>
                               <td className="p-2 text-center">
                                  <InventoryInput 
                                     value={row.record.closing || 0}
@@ -814,14 +822,19 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
                                  />
                               </td>
                               <td className="p-2 text-center">
-                                 <InventoryInput 
-                                    // 顯示：總損耗 (手動 + 系統)
-                                    value={row.totalWaste}
-                                    // 修改：輸入的總數 - 系統損耗 = 手動損耗
-                                    onChange={(val) => handleInventoryChange(row.product.id, 'waste', val - row.sysWaste)}
-                                    isFixedUnit={!!row.isFixedUnit}
-                                    colorClass="focus:border-red-500 text-white"
-                                 />
+                                 <div className="flex flex-col items-center">
+                                   <InventoryInput 
+                                      value={row.totalWaste}
+                                      onChange={(val) => handleInventoryChange(row.product.id, 'waste', val - row.sysWaste)}
+                                      isFixedUnit={!!row.isFixedUnit}
+                                      colorClass="focus:border-red-500 text-white"
+                                   />
+                                   {row.sysWaste > 0 && (
+                                     <span className="text-[10px] text-gray-400 mt-1">
+                                       (訂單: {row.sysWaste.toFixed(0)}{row.isFixedUnit ? '份' : 'g'})
+                                     </span>
+                                   )}
+                                 </div>
                               </td>
                               <td className="p-4 text-right font-mono font-bold text-blue-300 bg-gray-800/20">
                                  {row.salesQty.toFixed(0)} {row.isFixedUnit ? '份' : 'g'}
@@ -843,7 +856,8 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
                      </tbody>
                      <tfoot className="bg-gray-800 sticky bottom-0 z-10 font-bold border-t border-gray-600">
                         <tr>
-                           <td colSpan={8} className="p-4 text-right text-gray-300">本日總盤點差異金額</td>
+                           {/* colspan 加 1 因為多了一欄 */}
+                           <td colSpan={9} className="p-4 text-right text-gray-300">本日總盤點差異金額</td>
                            <td className={`p-4 text-right font-black text-lg ${totalInventoryDiff < 0 ? 'text-red-400' : totalInventoryDiff > 0 ? 'text-green-400' : 'text-white'}`}>
                               {totalInventoryDiff > 0 ? '+' : ''}{totalInventoryDiff.toLocaleString()}
                            </td>
