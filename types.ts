@@ -48,7 +48,7 @@ export interface Order {
   remarks?: string;
 }
 
-// ✅ 新增：寄放訂單的格式
+// 寄放訂單的格式
 export interface HeldOrder {
   id: string;
   timestamp: number;
@@ -57,8 +57,10 @@ export interface HeldOrder {
   isPaid: boolean;
 }
 
+// ✅ 修改這裡：加入 restock (進貨)
 export interface InventoryRecord {
-  opening: number; // 期初 (台斤 or 個)
+  opening: number; // 期初 (公克 or 份)
+  restock: number; // ✅ 新增：進貨 (公克 or 份)
   closing: number; // 期末
   waste: number;   // 損耗
 }
@@ -72,7 +74,6 @@ export interface DailyClosingRecord {
   order_count: number;
   inventory_variance: number;
   note?: string;
-  // ✅ 新增這一行：用來存商品銷售統計 { "小魚乾": 5, "鯊魚煙": 2 }
   sales_summary?: Record<string, number>; 
   created_at?: string;
 }
